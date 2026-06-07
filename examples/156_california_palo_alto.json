@@ -1,0 +1,60 @@
+{
+  "domain": "real_estate",
+  "task_type": "project_research",
+  "entity": {
+    "project_name": "156 California Avenue Mixed-Use Project",
+    "city": "Palo Alto",
+    "address": "156 California Ave, Palo Alto, CA 94306"
+  },
+  "data_needed": [
+    "planning status",
+    "staff report",
+    "public comments",
+    "CEQA status",
+    "unit count",
+    "zoning district",
+    "project planner"
+  ],
+  "freshness": "latest",
+  "source_policy": {
+    "prefer_official_sources": true,
+    "require_citations": true,
+    "require_raw_source_fetch": true
+  },
+  "provider_policy": {
+    "allowed_providers": ["openai_web_search", "crawler", "claude"],
+    "final_source_must_be_raw_document": true
+  },
+  "seed_sources": [
+    {
+      "provider": "crawler",
+      "title": "156 - 164 California Avenue",
+      "url": "https://www.paloalto.gov/Departments/Planning-Development-Services/Current-Planning/Projects/156-California-Avenue",
+      "snippet": "City of Palo Alto current planning project page for 156 California Avenue.",
+      "publisher": "City of Palo Alto",
+      "source_type": "candidate",
+      "confidence": 0.95,
+      "is_official": true
+    },
+    {
+      "provider": "crawler",
+      "title": "Two 156 Cal Ave. Development Options Now Available For Council Review",
+      "url": "https://www.paloalto.gov/News-Articles/City-Manager/Two-156-California-Avenue-Housing-Development-Options-Now-Available-For-Council-Review",
+      "snippet": "City news release about the May 18, 2026 Council review.",
+      "publisher": "City of Palo Alto",
+      "source_type": "candidate",
+      "confidence": 0.9,
+      "is_official": true
+    },
+    {
+      "provider": "crawler",
+      "title": "156 California Avenue Mixed-Use Project",
+      "url": "https://ceqanet.lci.ca.gov/2024120754",
+      "snippet": "CEQAnet record for 156 California Avenue Mixed-Use Project.",
+      "publisher": "California CEQAnet",
+      "source_type": "candidate",
+      "confidence": 0.85,
+      "is_official": true
+    }
+  ]
+}

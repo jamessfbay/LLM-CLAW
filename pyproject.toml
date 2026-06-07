@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-claw"
+version = "0.1.0"
+description = "Source linked data acquisition agent for evidence-backed LLM knowledge systems"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+http = ["fastapi>=0.111", "uvicorn>=0.30"]
+pdf = ["pypdf>=4.0"]
+llm = ["openai>=1.0"]
+
+[project.scripts]
+llm-claw = "llm_claw.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

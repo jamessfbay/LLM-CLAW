@@ -1,0 +1,25 @@
+{
+  "domain": "real_estate",
+  "task_type": "project_research",
+  "entity": {
+    "project_name": "Example Housing Project",
+    "city": "San Jose",
+    "address": "123 Main St"
+  },
+  "data_needed": [
+    "planning status",
+    "staff report",
+    "public comments",
+    "CEQA status"
+  ],
+  "freshness": "latest",
+  "source_policy": {
+    "prefer_official_sources": true,
+    "require_citations": true,
+    "require_raw_source_fetch": true
+  },
+  "provider_policy": {
+    "allowed_providers": ["mock", "search_api", "crawler", "claude"],
+    "final_source_must_be_raw_document": true
+  }
+}
