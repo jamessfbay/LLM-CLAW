@@ -3,11 +3,16 @@ from __future__ import annotations
 import re
 
 from llm_claw.models import AcquisitionTask, ExtractedClaim, RawSource
+from llm_claw.pipeline.source_filter import SourceRelevanceFilter
 
 
 class ContentExtractor:
-    def extract_text(self, sources: list[RawSource]) -> list[RawSource]:
-        return [source for source in sources if source.text.strip()]
+    def __init__(self) -> None:
+        self.relevance_filter = SourceRelevanceFilter()
+
+    def extract_text(self, task: AcquisitionTask, sources: list[RawSource]) -> list[RawSource]:
+        non_empty = [source for source in sources if source.text.strip()]
+        return self.relevance_filter.filter_sources(task, non_empty)
 
 
 class EvidenceExtractor:
@@ -44,7 +49,13 @@ def _find_sentence(sentences: list[str], need: str) -> str | None:
     if "status" in need.lower():
         for sentence in sentences:
             lower = sentence.lower()
-            if "under review" in lower or "approved" in lower or "pending" in lower:
+            if (
+                "under review" in lower
+                or "approved" in lower
+                or "pending" in lower
+                or "notice of preparation" in lower
+                or "draft eir" in lower
+            ):
                 return sentence
     for sentence in sentences:
         lower = sentence.lower()

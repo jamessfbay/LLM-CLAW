@@ -16,6 +16,8 @@ class ProviderRouter:
             selected.append("search_api")
         if "openai_web_search" in allowed:
             selected.append("openai_web_search")
+        if "gemini" in allowed:
+            selected.append("gemini")
         if "mock" in allowed:
             selected.append("mock")
 

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from llm_claw.config import Settings
 from llm_claw.models import AcquisitionTask, CandidateSource, EvidenceItem, EvidencePack, ProviderTrace, RawSource
 from llm_claw.pipeline.extractors import ContentExtractor, EvidenceExtractor
 from llm_claw.pipeline.normalizer import ConfidenceScorer, DataNormalizer
+from llm_claw.pipeline.source_filter import SourceRelevanceFilter
 from llm_claw.pipeline.source_fetcher import SourceFetcher
 from llm_claw.planning import DataNeedPlanner, QueryPlanner
 from llm_claw.providers.claude import ClaudeVerificationAgent
@@ -18,6 +23,7 @@ class DataAcquisitionEngine:
         self.query_planner = QueryPlanner()
         self.router = ProviderRouter(settings)
         self.fetcher = SourceFetcher(settings)
+        self.source_filter = SourceRelevanceFilter()
         self.content_extractor = ContentExtractor()
         self.evidence_extractor = EvidenceExtractor()
         self.normalizer = DataNormalizer()
@@ -31,24 +37,46 @@ class DataAcquisitionEngine:
 
         candidates: list[CandidateSource] = task.seed_sources[:]
         traces: list[ProviderTrace] = []
-        for provider_name in selected:
-            if provider_name in {"crawler", "claude"}:
-                continue
-            provider = build_provider(provider_name, self.settings)
-            for query in queries:
-                found, trace = provider.discover(task, query)
-                candidates.extend(found)
-                traces.append(trace)
+        discover_jobs = [
+            (provider_name, query)
+            for provider_name in selected
+            if provider_name not in {"crawler", "claude"}
+            for query in queries
+        ]
+        if discover_jobs:
+            with ThreadPoolExecutor(max_workers=max(1, self.settings.provider_max_workers)) as executor:
+                futures = {
+                    executor.submit(_timed_discover, build_provider(provider_name, self.settings), task, query): (
+                        provider_name,
+                        query,
+                    )
+                    for provider_name, query in discover_jobs
+                }
+                for future in as_completed(futures):
+                    found, trace = future.result()
+                    candidates.extend(found)
+                    traces.append(trace)
 
         candidates = _dedupe_candidates(candidates)
+        candidates = self.source_filter.filter_candidates(task, candidates)
         raw_sources: list[RawSource] = []
         if task.source_policy.require_raw_source_fetch or self.settings.require_raw_source_fetch:
+            fetch_start = time.perf_counter()
             raw_sources = self.fetcher.fetch(candidates)
-            traces.append(ProviderTrace(provider="crawler", candidate_count=len(raw_sources), message=f"Fetched {len(raw_sources)} raw sources."))
+            traces.append(
+                ProviderTrace(
+                    provider="crawler",
+                    candidate_count=len(raw_sources),
+                    message=f"Fetched {len(raw_sources)} raw sources.",
+                    duration_ms=_duration_ms(fetch_start),
+                )
+            )
 
-        extracted_sources = self.content_extractor.extract_text(raw_sources)
+        extracted_sources = self.content_extractor.extract_text(task, raw_sources)
         claims = self.evidence_extractor.extract_claims(task, extracted_sources)
+        verify_start = time.perf_counter()
         verification_notes, verification_trace = self.verifier.verify(claims, extracted_sources)
+        verification_trace.duration_ms = _duration_ms(verify_start)
         if "claude" in selected:
             traces.append(verification_trace)
 
@@ -93,16 +121,34 @@ class DataAcquisitionEngine:
         )
 
 
+def _timed_discover(provider, task: AcquisitionTask, query) -> tuple[list[CandidateSource], ProviderTrace]:
+    start = time.perf_counter()
+    found, trace = provider.discover(task, query)
+    trace.duration_ms = _duration_ms(start)
+    return found, trace
+
+
+def _duration_ms(start: float) -> int:
+    return max(0, round((time.perf_counter() - start) * 1000))
+
+
 def _dedupe_candidates(candidates: list[CandidateSource]) -> list[CandidateSource]:
     seen: set[str] = set()
     result: list[CandidateSource] = []
     for candidate in candidates:
-        key = candidate.url
+        key = _candidate_key(candidate)
         if key in seen:
             continue
         seen.add(key)
         result.append(candidate)
     return result
+
+
+def _candidate_key(candidate: CandidateSource) -> str:
+    match = re.search(r"ceqanet\.(?:lci|opr)\.ca\.gov/(?:project/)?(\d{10})(?:/\d+)?", candidate.url.lower())
+    if match:
+        return f"ceqanet:{match.group(1)}"
+    return candidate.url.rstrip("/").lower()
 
 
 def _missing_data(task: AcquisitionTask, evidence: list[EvidenceItem]) -> list[str]:

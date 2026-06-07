@@ -23,6 +23,19 @@ def test_provider_router_selects_search_mock_claude_and_crawler(tmp_path: Path) 
     assert providers == ["search_api", "mock", "claude", "crawler"]
 
 
+def test_provider_router_selects_gemini_when_allowed(tmp_path: Path) -> None:
+    task = AcquisitionTask.model_validate(
+        {
+            "entity": {"project_name": "Example Housing Project", "city": "San Jose"},
+            "data_needed": ["planning status"],
+            "provider_policy": {"allowed_providers": ["gemini", "crawler"]},
+        }
+    )
+    settings = Settings(workspace=tmp_path, provider_allowlist=["gemini", "crawler"])
+
+    assert ProviderRouter(settings).select_providers(task) == ["gemini", "crawler"]
+
+
 def test_cache_key_contains_stable_task_provider_dimensions() -> None:
     task = _task()
 

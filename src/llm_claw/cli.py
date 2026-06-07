@@ -6,6 +6,8 @@ from pathlib import Path
 
 from llm_claw.api import create_task, export_for_llm_kg, run_task
 from llm_claw.config import Settings
+from llm_claw.merge import merge_evidence_packs
+from llm_claw.models import EvidencePack
 from llm_claw.providers import list_provider_statuses
 
 
@@ -31,6 +33,11 @@ def main(argv: list[str] | None = None) -> None:
     export_parser.add_argument("evidence_pack_json")
     export_parser.add_argument("--workspace")
     export_parser.add_argument("--output", "-o")
+
+    merge_parser = subparsers.add_parser("merge")
+    merge_parser.add_argument("base_pack_json")
+    merge_parser.add_argument("other_pack_json", nargs="+")
+    merge_parser.add_argument("--output", "-o")
 
     args = parser.parse_args(argv)
 
@@ -63,6 +70,21 @@ def main(argv: list[str] | None = None) -> None:
             print(text)
         return
 
+    if args.command == "merge":
+        base = _load_pack(args.base_pack_json)
+        others = [_load_pack(path) for path in args.other_pack_json]
+        merged = merge_evidence_packs(base, *others)
+        text = merged.model_dump_json(indent=2)
+        if args.output:
+            Path(args.output).write_text(text, encoding="utf-8")
+        else:
+            print(text)
+        return
+
 
 def _print_json(payload) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+
+
+def _load_pack(path: str) -> EvidencePack:
+    return EvidencePack.model_validate(json.loads(Path(path).read_text(encoding="utf-8")))

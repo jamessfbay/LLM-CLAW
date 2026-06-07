@@ -99,6 +99,7 @@ class ProviderTrace(BaseModel):
     query: str | None = None
     message: str | None = None
     candidate_count: int = 0
+    duration_ms: int | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 

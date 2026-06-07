@@ -4,6 +4,8 @@ from llm_claw.api import run_task
 from llm_claw.models import AcquisitionTask
 from llm_claw.pipeline import DataAcquisitionEngine
 from llm_claw.config import Settings
+from llm_claw.models import CandidateSource
+from llm_claw.pipeline.engine import _dedupe_candidates
 
 
 def test_pipeline_outputs_evidence_pack_from_mock_raw_sources(tmp_path: Path) -> None:
@@ -40,3 +42,25 @@ def test_governance_final_evidence_requires_raw_source_fields(tmp_path: Path) ->
     llm_candidates = [candidate for candidate in pack.candidate_sources if candidate.provider == "mock"]
     assert llm_candidates
     assert all(candidate.snippet not in [item.evidence_text for item in pack.evidence] for candidate in llm_candidates)
+
+
+def test_dedupe_candidates_collapses_ceqanet_mirrors() -> None:
+    candidates = [
+        CandidateSource(
+            provider="crawler",
+            title="LCI record",
+            url="https://ceqanet.lci.ca.gov/2024120754",
+        ),
+        CandidateSource(
+            provider="gemini",
+            title="OPR record",
+            url="https://ceqanet.opr.ca.gov/Project/2024120754",
+        ),
+        CandidateSource(
+            provider="openai_web_search",
+            title="OPR posting",
+            url="https://ceqanet.opr.ca.gov/2024120754/2",
+        ),
+    ]
+
+    assert _dedupe_candidates(candidates) == [candidates[0]]
