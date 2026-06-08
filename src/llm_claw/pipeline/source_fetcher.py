@@ -99,7 +99,17 @@ class SourceFetcher:
         text = _extract_file_text(path, data)
         if not text.strip() or _is_blocked_response(text):
             return None
-        source_type = "official_pdf" if suffix == ".pdf" and candidate.is_official else "pdf" if suffix == ".pdf" else "official_html" if candidate.is_official else "webpage"
+        source_type = (
+            "youtube"
+            if _is_youtube_url(candidate.url)
+            else "official_pdf"
+            if suffix == ".pdf" and candidate.is_official
+            else "pdf"
+            if suffix == ".pdf"
+            else "official_html"
+            if candidate.is_official
+            else "webpage"
+        )
         return RawSource(
             candidate_id=candidate.id,
             source_url=candidate.url,
@@ -154,6 +164,11 @@ def _curl_fetch(url: str) -> tuple[bytes, str] | None:
         return None
     content_type = "application/pdf" if url.lower().endswith(".pdf") else "text/html"
     return result.stdout, content_type
+
+
+def _is_youtube_url(url: str) -> bool:
+    host = urlparse(url).netloc.lower()
+    return host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
 
 
 def _is_blocked_response(text: str) -> bool:

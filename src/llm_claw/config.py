@@ -21,7 +21,9 @@ class Settings(BaseModel):
     perplexity_api_key: str | None = None
     openai_api_key: str | None = None
     openai_model: str = "gpt-4.1-mini"
+    gemini_model: str = "gemini-3.5-flash"
     search_api_key: str | None = None
+    provider_max_workers: int = 4
 
     @classmethod
     def from_env(cls, workspace: Path | None = None) -> "Settings":
@@ -41,7 +43,9 @@ class Settings(BaseModel):
             perplexity_api_key=os.getenv("PERPLEXITY_API_KEY"),
             openai_api_key=os.getenv("OPENAI_API_KEY"),
             openai_model=os.getenv("LLM_CLAW_OPENAI_MODEL", "gpt-4.1-mini"),
+            gemini_model=os.getenv("LLM_CLAW_GEMINI_MODEL", "gemini-3.5-flash"),
             search_api_key=os.getenv("SEARCH_API_KEY"),
+            provider_max_workers=int(os.getenv("LLM_CLAW_PROVIDER_MAX_WORKERS", "4")),
         )
 
     def provider_enabled(self, provider: ProviderName) -> bool:

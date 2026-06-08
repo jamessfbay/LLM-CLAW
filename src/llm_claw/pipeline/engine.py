@@ -1,13 +1,28 @@
 from __future__ import annotations
 
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
+
 from llm_claw.config import Settings
-from llm_claw.models import AcquisitionTask, CandidateSource, EvidenceItem, EvidencePack, ProviderTrace, RawSource
+from llm_claw.models import (
+    AcquisitionTask,
+    CandidateSource,
+    EvidenceItem,
+    EvidencePack,
+    ProviderName,
+    ProviderTrace,
+    RawSource,
+)
 from llm_claw.pipeline.extractors import ContentExtractor, EvidenceExtractor
 from llm_claw.pipeline.normalizer import ConfidenceScorer, DataNormalizer
+from llm_claw.pipeline.source_filter import SourceRelevanceFilter
 from llm_claw.pipeline.source_fetcher import SourceFetcher
 from llm_claw.planning import DataNeedPlanner, QueryPlanner
 from llm_claw.providers.claude import ClaudeVerificationAgent
 from llm_claw.providers.factory import build_provider
+from llm_claw.providers.gemini import GeminiProvider
 from llm_claw.providers.router import ProviderRouter
 
 
@@ -18,11 +33,13 @@ class DataAcquisitionEngine:
         self.query_planner = QueryPlanner()
         self.router = ProviderRouter(settings)
         self.fetcher = SourceFetcher(settings)
+        self.source_filter = SourceRelevanceFilter()
         self.content_extractor = ContentExtractor()
         self.evidence_extractor = EvidenceExtractor()
         self.normalizer = DataNormalizer()
         self.scorer = ConfidenceScorer()
         self.verifier = ClaudeVerificationAgent()
+        self.youtube_analyzer = GeminiProvider(settings)
 
     def run(self, task: AcquisitionTask) -> EvidencePack:
         data_needs = self.data_need_planner.plan(task)
@@ -31,24 +48,54 @@ class DataAcquisitionEngine:
 
         candidates: list[CandidateSource] = task.seed_sources[:]
         traces: list[ProviderTrace] = []
-        for provider_name in selected:
-            if provider_name in {"crawler", "claude"}:
-                continue
-            provider = build_provider(provider_name, self.settings)
-            for query in queries:
-                found, trace = provider.discover(task, query)
-                candidates.extend(found)
-                traces.append(trace)
+        discover_jobs = [
+            (provider_name, query)
+            for provider_name in selected
+            if provider_name not in {"crawler", "claude"}
+            for query in queries
+        ]
+        if discover_jobs:
+            with ThreadPoolExecutor(max_workers=max(1, self.settings.provider_max_workers)) as executor:
+                futures = {
+                    executor.submit(_timed_discover, build_provider(provider_name, self.settings), task, query): (
+                        provider_name,
+                        query,
+                    )
+                    for provider_name, query in discover_jobs
+                }
+                for future in as_completed(futures):
+                    found, trace = future.result()
+                    candidates.extend(found)
+                    traces.append(trace)
 
         candidates = _dedupe_candidates(candidates)
+        candidates = self.source_filter.filter_candidates(task, candidates)
+        youtube_candidates = [candidate for candidate in candidates if _is_youtube_candidate(candidate)]
         raw_sources: list[RawSource] = []
         if task.source_policy.require_raw_source_fetch or self.settings.require_raw_source_fetch:
-            raw_sources = self.fetcher.fetch(candidates)
-            traces.append(ProviderTrace(provider="crawler", candidate_count=len(raw_sources), message=f"Fetched {len(raw_sources)} raw sources."))
+            fetch_candidates = [candidate for candidate in candidates if not _is_youtube_candidate(candidate)]
+            fetch_start = time.perf_counter()
+            raw_sources = self.fetcher.fetch(fetch_candidates)
+            traces.append(
+                ProviderTrace(
+                    provider="crawler",
+                    candidate_count=len(raw_sources),
+                    message=f"Fetched {len(raw_sources)} raw sources.",
+                    duration_ms=_duration_ms(fetch_start),
+                )
+            )
+        youtube_sources, youtube_candidate_traces = self._fetch_youtube_candidates_with_gemini(task, youtube_candidates)
+        raw_sources.extend(youtube_sources)
+        traces.extend(youtube_candidate_traces)
 
-        extracted_sources = self.content_extractor.extract_text(raw_sources)
+        raw_sources, youtube_traces = self._analyze_youtube_sources(task, raw_sources)
+        traces.extend(youtube_traces)
+
+        extracted_sources = self.content_extractor.extract_text(task, raw_sources)
         claims = self.evidence_extractor.extract_claims(task, extracted_sources)
+        verify_start = time.perf_counter()
         verification_notes, verification_trace = self.verifier.verify(claims, extracted_sources)
+        verification_trace.duration_ms = _duration_ms(verify_start)
         if "claude" in selected:
             traces.append(verification_trace)
 
@@ -70,7 +117,7 @@ class DataAcquisitionEngine:
                     evidence_text=claim.evidence_text,
                     retrieved_at=source.retrieved_at,
                     confidence=self.scorer.score(claim.confidence, source.source_type, verified),
-                    verified_by=["crawler", "claude"] if verified else ["crawler"],
+                    verified_by=_source_providers(source, verified),
                     source_id=source.id,
                     claim_id=claim.id,
                 )
@@ -92,17 +139,100 @@ class DataAcquisitionEngine:
             verification_notes=verification_notes,
         )
 
+    def _fetch_youtube_candidates_with_gemini(
+        self, task: AcquisitionTask, candidates: list[CandidateSource]
+    ) -> tuple[list[RawSource], list[ProviderTrace]]:
+        sources: list[RawSource] = []
+        traces: list[ProviderTrace] = []
+        for candidate in candidates:
+            start = time.perf_counter()
+            analyzed, trace = self.youtube_analyzer.analyze_youtube_candidate(task, candidate)
+            trace.duration_ms = _duration_ms(start)
+            traces.append(trace)
+            if analyzed and _has_useful_youtube_analysis(analyzed.text):
+                sources.append(analyzed)
+        return sources, traces
+
+    def _analyze_youtube_sources(
+        self, task: AcquisitionTask, sources: list[RawSource]
+    ) -> tuple[list[RawSource], list[ProviderTrace]]:
+        analyzed_sources: list[RawSource] = []
+        traces: list[ProviderTrace] = []
+        for source in sources:
+            if source.source_type != "youtube":
+                analyzed_sources.append(source)
+                continue
+            if source.metadata.get("analysis_provider") == "gemini":
+                analyzed_sources.append(source)
+                continue
+            start = time.perf_counter()
+            analyzed, trace = self.youtube_analyzer.analyze_youtube_source(task, source)
+            trace.duration_ms = _duration_ms(start)
+            traces.append(trace)
+            if analyzed and _has_useful_youtube_analysis(analyzed.text):
+                analyzed_sources.append(analyzed)
+        return analyzed_sources, traces
+
+
+def _timed_discover(provider, task: AcquisitionTask, query) -> tuple[list[CandidateSource], ProviderTrace]:
+    start = time.perf_counter()
+    found, trace = provider.discover(task, query)
+    trace.duration_ms = _duration_ms(start)
+    return found, trace
+
+
+def _duration_ms(start: float) -> int:
+    return max(0, round((time.perf_counter() - start) * 1000))
+
 
 def _dedupe_candidates(candidates: list[CandidateSource]) -> list[CandidateSource]:
     seen: set[str] = set()
     result: list[CandidateSource] = []
     for candidate in candidates:
-        key = candidate.url
+        key = _candidate_key(candidate)
         if key in seen:
             continue
         seen.add(key)
         result.append(candidate)
     return result
+
+
+def _candidate_key(candidate: CandidateSource) -> str:
+    match = re.search(r"ceqanet\.(?:lci|opr)\.ca\.gov/(?:project/)?(\d{10})(?:/\d+)?", candidate.url.lower())
+    if match:
+        return f"ceqanet:{match.group(1)}"
+    return candidate.url.rstrip("/").lower()
+
+
+def _is_youtube_candidate(candidate: CandidateSource) -> bool:
+    host = urlparse(candidate.url).netloc.lower()
+    return candidate.source_type == "youtube" or host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+
+
+def _has_useful_youtube_analysis(text: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    if "youtube.com/watch?v=" in normalized:
+        return True
+    if "no project-relevant youtube content found" in normalized:
+        return False
+    if "no requested youtube content found" in normalized:
+        return False
+    if normalized in {"no concrete youtube video url found.", "no concrete youtube video url found"}:
+        return False
+    return True
+
+
+def _source_providers(source: RawSource, verified: bool) -> list[ProviderName]:
+    providers: list[ProviderName] = []
+    if source.raw_path:
+        providers.append("crawler")
+    if source.metadata.get("source_fetcher") == "gemini" or source.metadata.get("analysis_provider") == "gemini":
+        providers.append("gemini")
+    if not providers:
+        providers.append("crawler")
+    if verified:
+        providers.append("claude")
+    return list(dict.fromkeys(providers))
 
 
 def _missing_data(task: AcquisitionTask, evidence: list[EvidenceItem]) -> list[str]:

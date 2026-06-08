@@ -29,6 +29,7 @@ ProviderName = Literal[
 
 
 class EntityInput(BaseModel):
+    project_id: str | None = None
     project_name: str | None = None
     type: str | None = None
     name: str | None = None
@@ -60,6 +61,8 @@ class AcquisitionTask(BaseModel):
     task_type: str = "project_research"
     entity: EntityInput
     data_needed: list[str] = Field(default_factory=list)
+    question: str | None = None
+    acquisition_instruction: str | None = None
     freshness: Literal["latest", "recent", "any"] = "latest"
     source_policy: SourcePolicy = Field(default_factory=SourcePolicy)
     provider_policy: ProviderPolicy = Field(default_factory=ProviderPolicy)
@@ -87,7 +90,7 @@ class CandidateSource(BaseModel):
     url: str
     snippet: str = ""
     publisher: str | None = None
-    source_type: Literal["candidate", "official_html", "official_pdf", "government_api", "webpage", "pdf"] = "candidate"
+    source_type: Literal["candidate", "official_html", "official_pdf", "government_api", "webpage", "pdf", "youtube"] = "candidate"
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     is_official: bool = False
     analysis_note: str | None = None
@@ -99,6 +102,7 @@ class ProviderTrace(BaseModel):
     query: str | None = None
     message: str | None = None
     candidate_count: int = 0
+    duration_ms: int | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -108,7 +112,7 @@ class RawSource(BaseModel):
     source_url: str
     source_title: str
     publisher: str | None = None
-    source_type: Literal["official_html", "official_pdf", "government_api", "webpage", "pdf", "local_html", "local_pdf"]
+    source_type: Literal["official_html", "official_pdf", "government_api", "webpage", "pdf", "local_html", "local_pdf", "youtube"]
     retrieved_at: datetime = Field(default_factory=utc_now)
     content_hash: str
     raw_path: str | None = None

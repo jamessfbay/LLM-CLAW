@@ -3,6 +3,7 @@ from __future__ import annotations
 from llm_claw.config import Settings
 from llm_claw.models import ProviderName
 from llm_claw.providers.llm_disabled import DisabledLLMProvider
+from llm_claw.providers.gemini import GeminiProvider
 from llm_claw.providers.mock import MockProvider
 from llm_claw.providers.openai_web_search import OpenAIWebSearchProvider
 from llm_claw.providers.search_api import SearchAPIProvider
@@ -14,7 +15,7 @@ def build_provider(name: ProviderName, settings: Settings):
     if name == "search_api":
         return SearchAPIProvider(settings)
     if name == "gemini":
-        return DisabledLLMProvider(name, settings, "GEMINI_API_KEY")
+        return GeminiProvider(settings)
     if name == "claude":
         return DisabledLLMProvider(name, settings, "ANTHROPIC_API_KEY")
     if name == "perplexity":

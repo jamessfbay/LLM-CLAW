@@ -3,11 +3,16 @@ from __future__ import annotations
 import re
 
 from llm_claw.models import AcquisitionTask, ExtractedClaim, RawSource
+from llm_claw.pipeline.source_filter import SourceRelevanceFilter
 
 
 class ContentExtractor:
-    def extract_text(self, sources: list[RawSource]) -> list[RawSource]:
-        return [source for source in sources if source.text.strip()]
+    def __init__(self) -> None:
+        self.relevance_filter = SourceRelevanceFilter()
+
+    def extract_text(self, task: AcquisitionTask, sources: list[RawSource]) -> list[RawSource]:
+        non_empty = [source for source in sources if source.text.strip()]
+        return self.relevance_filter.filter_sources(task, non_empty)
 
 
 class EvidenceExtractor:
@@ -30,6 +35,8 @@ class EvidenceExtractor:
                         confidence=0.62,
                     )
                 )
+            if source.source_type == "youtube":
+                claims.extend(_youtube_city_development_claims(task, source, sentences))
         return claims
 
 
@@ -41,16 +48,94 @@ def _sentences(text: str) -> list[str]:
 
 def _find_sentence(sentences: list[str], need: str) -> str | None:
     terms = [term for term in re.split(r"[\s/_-]+", need.lower()) if len(term) >= 4]
+    if _is_city_development_need(need):
+        return _find_city_development_sentence(sentences)
     if "status" in need.lower():
         for sentence in sentences:
             lower = sentence.lower()
-            if "under review" in lower or "approved" in lower or "pending" in lower:
+            if (
+                "under review" in lower
+                or "approved" in lower
+                or "pending" in lower
+                or "notice of preparation" in lower
+                or "draft eir" in lower
+            ):
                 return sentence
     for sentence in sentences:
         lower = sentence.lower()
         if any(term in lower for term in terms):
             return sentence
     return None
+
+
+def _find_city_development_sentence(sentences: list[str]) -> str | None:
+    for sentence in sentences:
+        lower = sentence.lower()
+        if _is_negative_availability_sentence(lower):
+            continue
+        if any(keyword in lower for keyword in _SUBSTANTIVE_CITY_DEVELOPMENT_KEYWORDS):
+            return sentence
+    return None
+
+
+def _youtube_city_development_claims(
+    task: AcquisitionTask, source: RawSource, sentences: list[str]
+) -> list[ExtractedClaim]:
+    claims: list[ExtractedClaim] = []
+    seen: set[str] = set()
+    for sentence in sentences:
+        lower = sentence.lower()
+        if _is_negative_availability_sentence(lower):
+            continue
+        if not any(keyword in lower for keyword in _SUBSTANTIVE_CITY_DEVELOPMENT_KEYWORDS):
+            continue
+        normalized = re.sub(r"\s+", " ", sentence).strip().lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        claims.append(
+            ExtractedClaim(
+                text=f"{task.entity.city or 'The city'} has city construction or planning information mentioned in a YouTube source.",
+                subject=task.entity.city or task.entity.display_name,
+                predicate="has_city_development_topic",
+                object="city construction and planning",
+                source_id=source.id,
+                evidence_text=sentence,
+                confidence=0.6,
+            )
+        )
+        if len(claims) >= 8:
+            break
+    return claims
+
+
+def _is_negative_availability_sentence(lower_sentence: str) -> bool:
+    negative_markers = [
+        "no detailed",
+        "no direct reference",
+        "no direct references",
+        "no visible information",
+        "not visible",
+        "not available",
+        "no meeting transcript",
+        "no transcript",
+        "no specific transcript",
+        "no specific transcripts",
+        "no specific agenda",
+        "were available in the provided text",
+        "no specific mention",
+        "no specific mentions",
+        "could not be found",
+        "cannot be found",
+        "not found",
+    ]
+    return any(marker in lower_sentence for marker in negative_markers)
+
+
+def _is_city_development_need(need: str) -> bool:
+    lower = need.lower()
+    matches = [keyword for keyword in _SUBSTANTIVE_CITY_DEVELOPMENT_KEYWORDS if keyword in lower]
+    return len(matches) >= 2
 
 
 def _claim_text(task: AcquisitionTask, need: str, evidence: str) -> str:
@@ -88,3 +173,30 @@ def _object_for_need(need: str, evidence: str) -> str:
     if "staff report" in need.lower():
         return "staff report"
     return need
+
+
+_CITY_DEVELOPMENT_KEYWORDS = {
+    "construction",
+    "development",
+    "housing",
+    "zoning",
+    "land use",
+    "planning",
+    "permit",
+    "permitting",
+    "infrastructure",
+    "public works",
+    "transportation",
+    "transit",
+    "ceqa",
+    "builder's remedy",
+    "builders remedy",
+    "affordable housing",
+    "density",
+    "height",
+    "agenda",
+    "project",
+}
+
+
+_SUBSTANTIVE_CITY_DEVELOPMENT_KEYWORDS = _CITY_DEVELOPMENT_KEYWORDS - {"city", "project", "agenda"}
