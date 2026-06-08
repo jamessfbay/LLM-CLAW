@@ -18,6 +18,10 @@ class SourceRelevanceFilter:
             return True
         if _is_blocked_url(candidate.url):
             return False
+        if candidate.source_type == "youtube" and candidate.is_official:
+            return True
+        if _is_official_youtube_channel(candidate.url):
+            return True
 
         text = " ".join(
             part
@@ -60,6 +64,13 @@ def _is_blocked_url(url: str) -> bool:
     if host == "opengis.cityofpaloalto.org" and path.rstrip("/") in {"", "/opengisdata"}:
         return True
     return False
+
+
+def _is_official_youtube_channel(url: str) -> bool:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower().rstrip("/")
+    return host in {"youtube.com", "www.youtube.com", "m.youtube.com"} and path.startswith("/@cityofpaloalto")
 
 
 def _has_strong_entity_anchor(task: AcquisitionTask, text: str) -> bool:

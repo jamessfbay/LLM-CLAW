@@ -60,6 +60,38 @@ def test_source_filter_keeps_project_specific_official_candidates() -> None:
     assert filterer.filter_candidates(task, candidates) == candidates
 
 
+def test_source_filter_keeps_official_city_youtube_channel_candidate() -> None:
+    task = _task()
+    filterer = SourceRelevanceFilter()
+    candidates = [
+        CandidateSource(
+            provider="crawler",
+            title="City of Palo Alto YouTube videos",
+            url="https://www.youtube.com/@cityofpaloalto/videos",
+            snippet="Official City of Palo Alto YouTube channel videos.",
+            is_official=True,
+        )
+    ]
+
+    assert filterer.filter_candidates(task, candidates) == candidates
+
+
+def test_source_filter_keeps_official_youtube_watch_candidate() -> None:
+    task = _task()
+    filterer = SourceRelevanceFilter()
+    candidates = [
+        CandidateSource(
+            provider="crawler",
+            title="City Council Meeting - June 1, 2026",
+            url="https://www.youtube.com/watch?v=Cczy-CGO8IE",
+            source_type="youtube",
+            is_official=True,
+        )
+    ]
+
+    assert filterer.filter_candidates(task, candidates) == candidates
+
+
 def test_source_filter_blocks_unrelated_raw_source_text() -> None:
     task = _task()
     filterer = SourceRelevanceFilter()

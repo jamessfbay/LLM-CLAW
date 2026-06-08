@@ -55,6 +55,16 @@
       "source_type": "candidate",
       "confidence": 0.85,
       "is_official": true
+    },
+    {
+      "provider": "crawler",
+      "title": "City of Palo Alto YouTube videos",
+      "url": "https://www.youtube.com/@cityofpaloalto/videos",
+      "snippet": "Official City of Palo Alto YouTube channel videos for public meetings and project-related updates.",
+      "publisher": "City of Palo Alto",
+      "source_type": "candidate",
+      "confidence": 0.72,
+      "is_official": true
     }
   ]
 }
