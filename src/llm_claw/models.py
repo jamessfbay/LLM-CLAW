@@ -120,6 +120,24 @@ class RawSource(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class SourceFetchDiagnostic(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("fetch"))
+    candidate_id: str | None = None
+    url: str
+    title: str | None = None
+    status: Literal["fetched", "failed", "dropped"] = "failed"
+    fetch_mode: str = "http"
+    http_status: int | None = None
+    final_url: str | None = None
+    content_type: str | None = None
+    bytes: int = 0
+    text_length: int = 0
+    raw_path: str | None = None
+    drop_reason: str | None = None
+    error: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class ExtractedClaim(BaseModel):
     id: str = Field(default_factory=lambda: new_id("claim"))
     text: str
@@ -166,6 +184,7 @@ class EvidencePack(BaseModel):
     provider_trace: list[ProviderTrace] = Field(default_factory=list)
     candidate_sources: list[CandidateSource] = Field(default_factory=list)
     raw_sources: list[RawSource] = Field(default_factory=list)
+    source_fetch_diagnostics: list[SourceFetchDiagnostic] = Field(default_factory=list)
     verification_notes: list[VerificationNote] = Field(default_factory=list)
 
 

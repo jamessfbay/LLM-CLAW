@@ -60,6 +60,22 @@ def test_source_filter_keeps_project_specific_official_candidates() -> None:
     assert filterer.filter_candidates(task, candidates) == candidates
 
 
+def test_source_filter_keeps_official_planning_seed_candidate() -> None:
+    task = _task()
+    filterer = SourceRelevanceFilter()
+    candidates = [
+        CandidateSource(
+            provider="crawler",
+            title="Planning & Development Services",
+            url="https://www.paloalto.gov/Departments/Planning-Development-Services",
+            snippet="Official planning, development, and permit services page.",
+            is_official=True,
+        )
+    ]
+
+    assert filterer.filter_candidates(task, candidates) == candidates
+
+
 def test_source_filter_keeps_official_city_youtube_channel_candidate() -> None:
     task = _task()
     filterer = SourceRelevanceFilter()
@@ -115,6 +131,20 @@ def test_source_filter_keeps_local_fixture_sources() -> None:
         source_type="local_html",
         content_hash="hash",
         text="A local fixture that intentionally may not match the project.",
+    )
+
+    assert filterer.filter_sources(task, [source]) == [source]
+
+
+def test_source_filter_keeps_official_planning_source_with_operational_signal() -> None:
+    task = _task()
+    filterer = SourceRelevanceFilter()
+    source = RawSource(
+        source_url="https://www.paloalto.gov/Departments/Planning-Development-Services",
+        source_title="Planning & Development Services",
+        source_type="official_html",
+        content_hash="hash",
+        text="Planning applications, development review, permit history, zoning, and public hearing agendas.",
     )
 
     assert filterer.filter_sources(task, [source]) == [source]

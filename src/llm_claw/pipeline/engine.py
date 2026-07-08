@@ -14,6 +14,7 @@ from llm_claw.models import (
     ProviderName,
     ProviderTrace,
     RawSource,
+    SourceFetchDiagnostic,
 )
 from llm_claw.pipeline.extractors import ContentExtractor, EvidenceExtractor
 from llm_claw.pipeline.normalizer import ConfidenceScorer, DataNormalizer
@@ -72,15 +73,16 @@ class DataAcquisitionEngine:
         candidates = self.source_filter.filter_candidates(task, candidates)
         youtube_candidates = [candidate for candidate in candidates if _is_youtube_candidate(candidate)]
         raw_sources: list[RawSource] = []
+        fetch_diagnostics: list[SourceFetchDiagnostic] = []
         if task.source_policy.require_raw_source_fetch or self.settings.require_raw_source_fetch:
             fetch_candidates = [candidate for candidate in candidates if not _is_youtube_candidate(candidate)]
             fetch_start = time.perf_counter()
-            raw_sources = self.fetcher.fetch(fetch_candidates)
+            raw_sources, fetch_diagnostics = self.fetcher.fetch_with_diagnostics(fetch_candidates)
             traces.append(
                 ProviderTrace(
                     provider="crawler",
                     candidate_count=len(raw_sources),
-                    message=f"Fetched {len(raw_sources)} raw sources.",
+                    message=f"Fetched {len(raw_sources)} raw sources; {len(fetch_diagnostics)} fetch attempt(s) recorded.",
                     duration_ms=_duration_ms(fetch_start),
                 )
             )
@@ -136,6 +138,7 @@ class DataAcquisitionEngine:
             provider_trace=traces,
             candidate_sources=candidates,
             raw_sources=raw_sources,
+            source_fetch_diagnostics=fetch_diagnostics,
             verification_notes=verification_notes,
         )
 

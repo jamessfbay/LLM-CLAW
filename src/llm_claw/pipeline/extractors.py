@@ -35,6 +35,7 @@ class EvidenceExtractor:
                         confidence=0.62,
                     )
                 )
+            claims.extend(_official_planning_page_claims(task, source, sentences))
             if source.source_type == "youtube":
                 claims.extend(_youtube_city_development_claims(task, source, sentences))
         return claims
@@ -109,6 +110,35 @@ def _youtube_city_development_claims(
     return claims
 
 
+def _official_planning_page_claims(
+    task: AcquisitionTask, source: RawSource, sentences: list[str]
+) -> list[ExtractedClaim]:
+    if source.source_type not in {"official_html", "webpage", "local_html", "government_api"}:
+        return []
+    if not (source.publisher or source.metadata.get("content_type") or source.source_url):
+        return []
+    if not _has_planning_or_permit_need(task):
+        return []
+    for sentence in sentences:
+        lower = sentence.lower()
+        if _is_negative_availability_sentence(lower):
+            continue
+        if any(keyword in lower for keyword in _OFFICIAL_PLANNING_PAGE_KEYWORDS):
+            return [
+                ExtractedClaim(
+                    text=f"{task.entity.display_name} has official planning or permit information available in the fetched source.",
+                    subject=task.entity.display_name,
+                    predicate="has_source_linked_data",
+                    object="official planning or permit information",
+                    source_id=source.id,
+                    evidence_text=sentence,
+                    confidence=0.48,
+                    status="uncertain",
+                )
+            ]
+    return []
+
+
 def _is_negative_availability_sentence(lower_sentence: str) -> bool:
     negative_markers = [
         "no detailed",
@@ -136,6 +166,11 @@ def _is_city_development_need(need: str) -> bool:
     lower = need.lower()
     matches = [keyword for keyword in _SUBSTANTIVE_CITY_DEVELOPMENT_KEYWORDS if keyword in lower]
     return len(matches) >= 2
+
+
+def _has_planning_or_permit_need(task: AcquisitionTask) -> bool:
+    text = " ".join([task.question or "", task.acquisition_instruction or "", *task.data_needed]).lower()
+    return any(keyword in text for keyword in _OFFICIAL_PLANNING_PAGE_KEYWORDS)
 
 
 def _claim_text(task: AcquisitionTask, need: str, evidence: str) -> str:
@@ -200,3 +235,18 @@ _CITY_DEVELOPMENT_KEYWORDS = {
 
 
 _SUBSTANTIVE_CITY_DEVELOPMENT_KEYWORDS = _CITY_DEVELOPMENT_KEYWORDS - {"city", "project", "agenda"}
+
+_OFFICIAL_PLANNING_PAGE_KEYWORDS = {
+    "permit",
+    "permits",
+    "permitting",
+    "planning",
+    "entitlement",
+    "entitlements",
+    "development",
+    "staff report",
+    "agenda",
+    "zoning",
+    "public hearing",
+    "appeal",
+}

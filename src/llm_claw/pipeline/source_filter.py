@@ -18,6 +18,8 @@ class SourceRelevanceFilter:
             return True
         if _is_blocked_url(candidate.url):
             return False
+        if candidate.is_official and _is_official_web_host(candidate.url):
+            return True
         if candidate.source_type == "youtube" and candidate.is_official:
             return True
         if _is_official_youtube_channel(candidate.url):
@@ -45,6 +47,8 @@ class SourceRelevanceFilter:
         text = " ".join([source.source_title, source.source_url, source.text[:5000]])
         if _has_strong_entity_anchor(task, text):
             return True
+        if source.source_type in {"official_html", "government_api", "webpage"} and _is_official_web_host(source.source_url):
+            return _has_operational_planning_signal(task, text)
         return _has_project_token_overlap(task, text, minimum=3)
 
 
@@ -71,6 +75,33 @@ def _is_official_youtube_channel(url: str) -> bool:
     host = parsed.netloc.lower()
     path = parsed.path.lower().rstrip("/")
     return host in {"youtube.com", "www.youtube.com", "m.youtube.com"} and path.startswith("/@cityofpaloalto")
+
+
+def _is_official_web_host(url: str) -> bool:
+    host = urlparse(url).netloc.lower()
+    return host.endswith(".gov") or host.endswith(".ca.gov") or "paloalto.gov" in host or "ceqanet" in host
+
+
+def _has_operational_planning_signal(task: AcquisitionTask, text: str) -> bool:
+    normalized = _normalize(text)
+    task_text = _normalize(" ".join([task.question or "", task.acquisition_instruction or "", *task.data_needed]))
+    planning_terms = {
+        "permit",
+        "permits",
+        "permitting",
+        "planning",
+        "development",
+        "entitlement",
+        "entitlements",
+        "zoning",
+        "agenda",
+        "appeal",
+        "hearing",
+        "ceqa",
+    }
+    source_hits = planning_terms & set(_tokens(normalized))
+    task_hits = planning_terms & set(_tokens(task_text))
+    return len(source_hits) >= 2 and (bool(task_hits) or "planning" in source_hits or "permit" in source_hits)
 
 
 def _has_strong_entity_anchor(task: AcquisitionTask, text: str) -> bool:
