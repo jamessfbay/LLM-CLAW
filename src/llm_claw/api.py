@@ -30,9 +30,20 @@ def run_task(task_id_or_payload: JsonLike, workspace: Path | None = None) -> Evi
     return pack
 
 
-def export_for_llm_kg(evidence_pack: EvidencePack | dict[str, Any] | str | Path) -> dict[str, Any]:
+def export_for_llm_kg(
+    evidence_pack: EvidencePack | dict[str, Any] | str | Path,
+    workspace: Path | None = None,
+) -> dict[str, Any]:
     pack = _load_pack(evidence_pack)
-    return _export_for_llm_kg(pack)
+    payload = _export_for_llm_kg(pack)
+    if workspace is not None:
+        settings = Settings.from_env(workspace)
+        out_dir = settings.workspace / ".llm_claw" / "kg_exports"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        output_path = out_dir / f"{pack.request_id}.json"
+        output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        payload["artifact_path"] = str(output_path)
+    return payload
 
 
 def _load_task_or_id(value: JsonLike, workspace: Path) -> AcquisitionTask:

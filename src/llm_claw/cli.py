@@ -54,7 +54,12 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "run":
         workspace = Path(args.workspace) if args.workspace else None
         pack = run_task(args.task_json, workspace=workspace)
-        text = pack.model_dump_json(indent=2)
+        payload = pack.model_dump(mode="json")
+        if workspace is not None:
+            payload["artifact_path"] = str(
+                workspace.resolve() / ".llm_claw" / "evidence_packs" / f"{pack.request_id}.json"
+            )
+        text = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
         if args.output:
             Path(args.output).write_text(text, encoding="utf-8")
         else:
@@ -62,7 +67,8 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "export-kg":
-        payload = export_for_llm_kg(args.evidence_pack_json)
+        workspace = Path(args.workspace) if args.workspace else None
+        payload = export_for_llm_kg(args.evidence_pack_json, workspace=workspace)
         text = json.dumps(payload, indent=2, ensure_ascii=False)
         if args.output:
             Path(args.output).write_text(text, encoding="utf-8")

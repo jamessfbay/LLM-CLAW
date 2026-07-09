@@ -148,3 +148,42 @@ def test_source_filter_keeps_official_planning_source_with_operational_signal() 
     )
 
     assert filterer.filter_sources(task, [source]) == [source]
+
+
+def test_source_filter_normalizes_ampersand_in_cross_industry_entity_names() -> None:
+    task = AcquisitionTask.model_validate(
+        {
+            "domain": "consumer_product_safety",
+            "entity": {"name": "Fisher and Paykel Gas Ranges", "type": "consumer_product"},
+            "data_needed": ["burn hazard", "repair remedy"],
+        }
+    )
+    source = RawSource(
+        source_url="https://www.cpsc.gov/Recalls/example",
+        source_title="Fisher & Paykel Gas Ranges Recalled",
+        source_type="official_html",
+        content_hash="hash",
+        text="Fisher & Paykel Gas Ranges were recalled because delayed ignition poses a burn hazard.",
+    )
+
+    assert SourceRelevanceFilter().filter_sources(task, [source]) == [source]
+
+
+def test_source_filter_keeps_official_source_with_domain_task_signals() -> None:
+    task = AcquisitionTask.model_validate(
+        {
+            "domain": "cybersecurity",
+            "entity": {"name": "Enterprise vulnerability response", "type": "cybersecurity_alert"},
+            "data_needed": ["active exploitation", "remediation requirement"],
+            "question": "Which actively exploited vulnerabilities require remediation?",
+        }
+    )
+    source = RawSource(
+        source_url="https://www.cisa.gov/news-events/alerts/example",
+        source_title="Known Exploited Vulnerabilities Alert",
+        source_type="official_html",
+        content_hash="hash",
+        text="CISA identified active exploitation and requires timely remediation of catalog vulnerabilities.",
+    )
+
+    assert SourceRelevanceFilter().filter_sources(task, [source]) == [source]

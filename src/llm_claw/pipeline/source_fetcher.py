@@ -64,7 +64,7 @@ class SourceFetcher:
             content_hash=digest,
             raw_path=str(path),
             text=body,
-            metadata={"mock": True},
+            metadata={"mock": True, "candidate_snippet": candidate.snippet},
         )
 
     def _file_source(self, candidate: CandidateSource) -> tuple[RawSource | None, SourceFetchDiagnostic]:
@@ -77,7 +77,7 @@ class SourceFetcher:
         copy_path = self.raw_dir / f"{digest}{path.suffix.lower()}"
         copy_path.write_bytes(data)
         text = _extract_file_text(path, data)
-        drop_reason = _drop_reason(text)
+        drop_reason = _drop_reason(text, raw_data=data)
         if drop_reason:
             return None, _diagnostic(
                 candidate,
@@ -88,8 +88,6 @@ class SourceFetcher:
                 raw_path=str(copy_path),
                 drop_reason=drop_reason,
             )
-        if _is_blocked_response(text):
-            return None, _diagnostic(candidate, status="dropped", fetch_mode="file", bytes=len(data), text_length=len(text), raw_path=str(copy_path), drop_reason="blocked_response")
         source_type = "local_pdf" if path.suffix.lower() == ".pdf" else "local_html"
         source = RawSource(
             candidate_id=candidate.id,
@@ -132,12 +130,29 @@ class SourceFetcher:
             else:
                 data, content_type = fetched
                 fetch_mode = "curl"
-        digest = _hash(data)
-        suffix = ".pdf" if "pdf" in content_type or candidate.url.lower().endswith(".pdf") else ".html"
-        path = self.raw_dir / f"{digest}{suffix}"
-        path.write_bytes(data)
-        text = _extract_file_text(path, data)
-        drop_reason = _drop_reason(text)
+        digest, suffix, path, text = self._persist_response(candidate, data, content_type)
+        drop_reason = _drop_reason(text, raw_data=data, http_status=http_status)
+        if drop_reason and fetch_mode == "http":
+            curl_retry = _curl_fetch(candidate.url)
+            if curl_retry:
+                data, content_type = curl_retry
+                fetch_mode = "curl"
+                digest, suffix, path, text = self._persist_response(candidate, data, content_type)
+                drop_reason = _drop_reason(text, raw_data=data, http_status=http_status)
+        if drop_reason and fetch_mode != "node":
+            node_retry = _node_fetch(candidate.url)
+            if node_retry:
+                data, content_type = node_retry
+                fetch_mode = "node"
+                digest, suffix, path, text = self._persist_response(candidate, data, content_type)
+                drop_reason = _drop_reason(text, raw_data=data, http_status=http_status)
+        if drop_reason and fetch_mode != "browser" and os.getenv("CLAW_ENABLE_BROWSER_FETCH") == "1":
+            browser = _browser_fetch(candidate.url)
+            if browser:
+                data, content_type, final_url = browser
+                fetch_mode = "browser"
+                digest, suffix, path, text = self._persist_response(candidate, data, content_type)
+                drop_reason = _drop_reason(text, raw_data=data, http_status=http_status)
         if drop_reason:
             return None, _diagnostic(
                 candidate,
@@ -186,6 +201,18 @@ class SourceFetcher:
             raw_path=str(path),
             error=error,
         )
+
+    def _persist_response(
+        self,
+        candidate: CandidateSource,
+        data: bytes,
+        content_type: str,
+    ) -> tuple[str, str, Path, str]:
+        digest = _hash(data)
+        suffix = ".pdf" if "pdf" in content_type or candidate.url.lower().endswith(".pdf") else ".html"
+        path = self.raw_dir / f"{digest}{suffix}"
+        path.write_bytes(data)
+        return digest, suffix, path, _extract_file_text(path, data)
 
 
 def _hash(data: bytes) -> str:
@@ -294,6 +321,27 @@ def _browser_fetch(url: str) -> tuple[bytes, str, str | None] | None:
         return None
 
 
+def _node_fetch(url: str) -> tuple[bytes, str] | None:
+    script = (
+        "const r=await fetch(process.argv[1],{redirect:'follow',headers:{'user-agent':'NOX-Source-Monitor/0.1 (+local decision runtime)'}});"
+        "if(!r.ok)process.exit(2);"
+        "const b=Buffer.from(await r.arrayBuffer());process.stdout.write(b);"
+    )
+    try:
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script, url],
+            check=False,
+            capture_output=True,
+            timeout=30,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0 or not result.stdout:
+        return None
+    content_type = "application/pdf" if url.lower().endswith(".pdf") else "text/html"
+    return result.stdout, content_type
+
+
 def _is_youtube_url(url: str) -> bool:
     host = urlparse(url).netloc.lower()
     return host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
@@ -305,11 +353,19 @@ def _is_blocked_response(text: str) -> bool:
         "access denied",
         "you don't have permission to access",
         "request blocked",
+        "automated access to our sites must comply",
+        "request rate threshold exceeded",
     ]
     return any(marker in lower for marker in blocked_markers)
 
 
-def _drop_reason(text: str) -> str | None:
+def _drop_reason(text: str, *, raw_data: bytes | None = None, http_status: int | None = None) -> str | None:
+    lower = text.lower()
+    raw_lower = (raw_data or b"").lower()
+    if http_status == 404 or b'data-headerstatus="404"' in raw_lower or b"data-headerstatus='404'" in raw_lower:
+        return "http_404"
+    if "request rate threshold exceeded" in lower or "automated access to our sites must comply" in lower:
+        return "rate_limited"
     if not text.strip():
         return "empty_text"
     if _is_blocked_response(text):

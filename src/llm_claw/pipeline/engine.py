@@ -77,7 +77,10 @@ class DataAcquisitionEngine:
         if task.source_policy.require_raw_source_fetch or self.settings.require_raw_source_fetch:
             fetch_candidates = [candidate for candidate in candidates if not _is_youtube_candidate(candidate)]
             fetch_start = time.perf_counter()
-            raw_sources, fetch_diagnostics = self.fetcher.fetch_with_diagnostics(fetch_candidates)
+            if hasattr(self.fetcher, "fetch_with_diagnostics"):
+                raw_sources, fetch_diagnostics = self.fetcher.fetch_with_diagnostics(fetch_candidates)
+            else:
+                raw_sources = self.fetcher.fetch(fetch_candidates)
             traces.append(
                 ProviderTrace(
                     provider="crawler",
@@ -126,7 +129,7 @@ class DataAcquisitionEngine:
             )
 
         structured = self.normalizer.normalize(task, claims)
-        missing = _missing_data(task, evidence)
+        missing = _missing_data(task, evidence, raw_sources, fetch_diagnostics)
         return EvidencePack(
             request_id=task.id,
             entity=task.entity.model_dump(mode="json"),
@@ -134,7 +137,7 @@ class DataAcquisitionEngine:
             structured_data=structured,
             evidence=evidence,
             missing_data=missing,
-            recommended_next_actions=_next_actions(missing),
+            recommended_next_actions=_next_actions(task, missing),
             provider_trace=traces,
             candidate_sources=candidates,
             raw_sources=raw_sources,
@@ -238,25 +241,56 @@ def _source_providers(source: RawSource, verified: bool) -> list[ProviderName]:
     return list(dict.fromkeys(providers))
 
 
-def _missing_data(task: AcquisitionTask, evidence: list[EvidenceItem]) -> list[str]:
+def _missing_data(
+    task: AcquisitionTask,
+    evidence: list[EvidenceItem],
+    raw_sources: list[RawSource] | None = None,
+    diagnostics: list[SourceFetchDiagnostic] | None = None,
+) -> list[str]:
     missing: list[str] = []
     evidence_text = " ".join(item.claim.lower() for item in evidence)
     for need in task.data_needed:
-        terms = [term for term in need.lower().split() if len(term) >= 4]
-        if terms and not any(term in evidence_text for term in terms):
+        if not _need_is_covered(need, evidence_text):
             missing.append(f"No verified raw-source evidence found for {need}.")
     if not evidence:
-        missing.append("No raw-source evidence could be fetched.")
+        if raw_sources or any(item.raw_path for item in diagnostics or []):
+            missing.append("Raw source was fetched but no usable source-linked evidence was extracted.")
+        else:
+            missing.append("No raw source could be fetched; inspect source fetch diagnostics.")
     return missing
 
 
-def _next_actions(missing: list[str]) -> list[str]:
+def _need_is_covered(need: str, evidence_text: str) -> bool:
+    lower_need = need.lower()
+    if "cve" in lower_need and re.search(r"\bCVE-\d{4}-\d{4,}\b", evidence_text, re.I):
+        return True
+    if "date" in lower_need and (
+        re.search(
+            r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},\s+\d{4}\b",
+            evidence_text,
+            re.I,
+        )
+        or re.search(r"\b\d{4}-\d{2}-\d{2}\b", evidence_text)
+    ):
+        return True
+    evidence_tokens = set(re.findall(r"[a-z0-9]+", evidence_text.lower()))
+    terms = [term for term in re.findall(r"[a-z0-9]+", lower_need) if len(term) >= 3]
+    return bool(terms) and any(_term_is_covered(term, evidence_tokens) for term in terms)
+
+
+def _term_is_covered(term: str, tokens: set[str]) -> bool:
+    if term in tokens:
+        return True
+    stem = term[:7] if len(term) >= 7 else term
+    return len(stem) >= 5 and any(token.startswith(stem) for token in tokens)
+
+
+def _next_actions(task: AcquisitionTask, missing: list[str]) -> list[str]:
     if not missing:
         return ["Review Evidence Pack before upserting to LLM-KG."]
     return [
-        "Search city council and planning commission agendas.",
-        "Check permit and parcel databases.",
-        "Review CEQA notice repositories and staff report PDFs.",
+        f"Acquire an additional authoritative source for {need}."
+        for need in task.data_needed
     ]
 
 

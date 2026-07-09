@@ -30,6 +30,10 @@ llm-claw run examples/project_research.json --output tmp/evidence_pack.json
 llm-claw export-kg tmp/evidence_pack.json --workspace ../LLM-KG --output tmp/llm_kg_import.json
 ```
 
+Evidence Packs are always persisted under `.llm_claw/evidence_packs/`. When `export-kg` receives `--workspace`, the canonical import artifact is persisted under `.llm_claw/kg_exports/` and the JSON output includes `artifact_path`.
+
+For government sites that return CDN block pages, source acquisition retries Python HTTP, curl, a dependency-free Node fetch fallback, and optionally Playwright when `CLAW_ENABLE_BROWSER_FETCH=1`. Every attempt remains visible in `source_fetch_diagnostics`.
+
 ## Environment
 
 - `LLM_CLAW_WORKSPACE`: workspace path; defaults to current directory.

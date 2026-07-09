@@ -20,10 +20,20 @@ class EvidenceExtractor:
         claims: list[ExtractedClaim] = []
         for source in sources:
             sentences = _sentences(source.text)
+            if source.metadata.get("mock"):
+                excluded_mock_text = {
+                    _normalized_sentence(source.source_title),
+                    _normalized_sentence(str(source.metadata.get("candidate_snippet", ""))),
+                }
+                sentences = [sentence for sentence in sentences if _normalized_sentence(sentence) not in excluded_mock_text]
+            used_evidence: set[str] = set()
             for need in task.data_needed:
-                evidence = _find_sentence(sentences, need)
+                evidence = _find_sentence(sentences, need, excluded=used_evidence)
+                if not evidence:
+                    evidence = _find_sentence(sentences, need)
                 if not evidence:
                     continue
+                used_evidence.add(_normalized_sentence(evidence))
                 claims.append(
                     ExtractedClaim(
                         text=_claim_text(task, need, evidence),
@@ -42,17 +52,44 @@ class EvidenceExtractor:
 
 
 def _sentences(text: str) -> list[str]:
-    cleaned = re.sub(r"\s+", " ", text).strip()
-    parts = re.split(r"(?<=[.!?。])\s+", cleaned)
+    parts: list[str] = []
+    for line in text.splitlines():
+        cleaned = re.sub(r"\s+", " ", line).strip()
+        if not cleaned:
+            continue
+        parts.extend(re.split(r"(?<=[.!?。])\s+", cleaned))
     return [part.strip() for part in parts if len(part.strip()) >= 20]
 
 
-def _find_sentence(sentences: list[str], need: str) -> str | None:
-    terms = [term for term in re.split(r"[\s/_-]+", need.lower()) if len(term) >= 4]
+def _find_sentence(sentences: list[str], need: str, excluded: set[str] | None = None) -> str | None:
+    excluded = excluded or set()
+    terms = [term for term in re.split(r"[\s/_-]+", need.lower()) if len(term) >= 3]
+    usable = [
+        sentence
+        for sentence in sentences
+        if _normalized_sentence(sentence) not in excluded and not _is_boilerplate_sentence(sentence)
+    ]
+    lower_need = need.lower()
+    if "cve" in lower_need and ("identifier" in lower_need or "id" in lower_need):
+        return next((sentence for sentence in usable if re.search(r"\bCVE-\d{4}-\d{4,}\b", sentence, re.I)), None)
+    if "date" in lower_need:
+        labeled = next(
+            (
+                sentence
+                for sentence in usable
+                if re.search(r"\b(date issued|release date|recall date|effective date)\b", sentence, re.I)
+            ),
+            None,
+        )
+        if labeled:
+            return labeled
+        dated = next((sentence for sentence in usable if _contains_absolute_date(sentence)), None)
+        if dated:
+            return dated
     if _is_city_development_need(need):
-        return _find_city_development_sentence(sentences)
+        return _find_city_development_sentence(usable)
     if "status" in need.lower():
-        for sentence in sentences:
+        for sentence in usable:
             lower = sentence.lower()
             if (
                 "under review" in lower
@@ -62,11 +99,54 @@ def _find_sentence(sentences: list[str], need: str) -> str | None:
                 or "draft eir" in lower
             ):
                 return sentence
-    for sentence in sentences:
-        lower = sentence.lower()
-        if any(term in lower for term in terms):
-            return sentence
-    return None
+    ranked = sorted(
+        ((_sentence_match_score(sentence, terms, lower_need), sentence) for sentence in usable),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    return ranked[0][1] if ranked and ranked[0][0] > 0 else None
+
+
+def _sentence_match_score(sentence: str, terms: list[str], need: str) -> int:
+    tokens = set(re.findall(r"[a-z0-9]+", sentence.lower()))
+    matched = sum(1 for term in terms if _term_matches(term, tokens))
+    phrase_bonus = 3 if need in sentence.lower() else 0
+    substantive_bonus = 1 if 30 <= len(sentence) <= 600 else 0
+    return matched * 4 + phrase_bonus + substantive_bonus
+
+
+def _term_matches(term: str, tokens: set[str]) -> bool:
+    if term in tokens:
+        return True
+    stem = term[:7] if len(term) >= 7 else term
+    return len(stem) >= 5 and any(token.startswith(stem) for token in tokens)
+
+
+def _is_boilerplate_sentence(sentence: str) -> bool:
+    lower = sentence.lower()
+    return any(
+        marker in lower
+        for marker in [
+            "skip to main content",
+            "an official website of",
+            "official websites use .gov",
+            "here's how you know",
+            "here’s how you know",
+            "subscribe to email updates",
+        ]
+    )
+
+
+def _contains_absolute_date(sentence: str) -> bool:
+    month = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    return bool(
+        re.search(rf"\b{month}\s+\d{{1,2}},\s+\d{{4}}\b", sentence, re.I)
+        or re.search(r"\b\d{4}-\d{2}-\d{2}\b", sentence)
+    )
+
+
+def _normalized_sentence(sentence: str) -> str:
+    return re.sub(r"\s+", " ", sentence).strip().lower()
 
 
 def _find_city_development_sentence(sentences: list[str]) -> str | None:
@@ -183,7 +263,7 @@ def _claim_text(task: AcquisitionTask, need: str, evidence: str) -> str:
         return f"{entity} has public comment information mentioned in the fetched source."
     if "staff report" in need.lower():
         return f"{entity} is mentioned in a staff report or planning record."
-    return f"{entity} has source-linked information for {need}."
+    return evidence
 
 
 def _predicate_for_need(need: str) -> str:

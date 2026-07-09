@@ -25,6 +25,7 @@ def test_cli_run_writes_valid_evidence_pack(tmp_path: Path) -> None:
     data = json.loads(output.read_text(encoding="utf-8"))
     assert data["request_id"]
     assert data["evidence"]
+    assert (tmp_path / ".llm_claw" / "evidence_packs" / f"{data['request_id']}.json").exists()
 
 
 def test_cli_export_kg_writes_payload(tmp_path: Path) -> None:
@@ -37,3 +38,15 @@ def test_cli_export_kg_writes_payload(tmp_path: Path) -> None:
 
     data = json.loads(kg_path.read_text(encoding="utf-8"))
     assert data["format"] == "llm-kg-import"
+
+
+def test_cli_export_kg_persists_canonical_artifact(tmp_path: Path, capsys) -> None:
+    pack = run_task(Path("examples/project_research.json"), workspace=tmp_path)
+    pack_path = tmp_path / ".llm_claw" / "evidence_packs" / f"{pack.request_id}.json"
+
+    main(["export-kg", str(pack_path), "--workspace", str(tmp_path)])
+
+    data = json.loads(capsys.readouterr().out)
+    artifact_path = Path(data["artifact_path"])
+    assert artifact_path == tmp_path / ".llm_claw" / "kg_exports" / f"{pack.request_id}.json"
+    assert artifact_path.exists()

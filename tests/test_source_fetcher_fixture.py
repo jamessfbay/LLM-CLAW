@@ -3,6 +3,7 @@ from pathlib import Path
 from llm_claw.config import Settings
 from llm_claw.models import CandidateSource
 from llm_claw.pipeline.source_fetcher import SourceFetcher
+from llm_claw.pipeline import source_fetcher
 
 
 def test_source_fetcher_reads_local_html_fixture(tmp_path: Path) -> None:
@@ -59,3 +60,57 @@ def test_source_fetcher_records_drop_reason_for_empty_source(tmp_path: Path) -> 
     assert diagnostics[0].status == "dropped"
     assert diagnostics[0].drop_reason == "empty_text"
     assert diagnostics[0].raw_path
+
+
+def test_browser_fallback_retries_a_blocked_http_response(tmp_path: Path, monkeypatch) -> None:
+    candidate = CandidateSource(
+        provider="crawler",
+        title="Official planning projects",
+        url="https://example.test/planning",
+        is_official=True,
+    )
+    monkeypatch.setenv("CLAW_ENABLE_BROWSER_FETCH", "1")
+    monkeypatch.setattr(source_fetcher, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("blocked")))
+    monkeypatch.setattr(source_fetcher, "_curl_fetch", lambda _url: (b"<html>Access denied</html>", "text/html"))
+    monkeypatch.setattr(source_fetcher, "_node_fetch", lambda _url: None)
+    monkeypatch.setattr(
+        source_fetcher,
+        "_browser_fetch",
+        lambda _url: (
+            b"<html><body><h1>Planning projects</h1><p>Permit and entitlement review information is available.</p></body></html>",
+            "text/html",
+            candidate.url,
+        ),
+    )
+
+    sources, diagnostics = SourceFetcher(Settings(workspace=tmp_path)).fetch_with_diagnostics([candidate])
+
+    assert len(sources) == 1
+    assert diagnostics[0].status == "fetched"
+    assert diagnostics[0].fetch_mode == "browser"
+    assert "entitlement review" in sources[0].text
+
+
+def test_node_fallback_recovers_when_http_and_curl_are_blocked(tmp_path: Path, monkeypatch) -> None:
+    candidate = CandidateSource(
+        provider="crawler",
+        title="Official planning projects",
+        url="https://example.test/planning",
+        is_official=True,
+    )
+    monkeypatch.setattr(source_fetcher, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("blocked")))
+    monkeypatch.setattr(source_fetcher, "_curl_fetch", lambda _url: (b"<html>Access denied</html>", "text/html"))
+    monkeypatch.setattr(
+        source_fetcher,
+        "_node_fetch",
+        lambda _url: (
+            b"<html><body><h1>Planning projects</h1><p>Permit and entitlement review information is available.</p></body></html>",
+            "text/html",
+        ),
+    )
+
+    sources, diagnostics = SourceFetcher(Settings(workspace=tmp_path)).fetch_with_diagnostics([candidate])
+
+    assert len(sources) == 1
+    assert diagnostics[0].fetch_mode == "node"
+    assert diagnostics[0].status == "fetched"

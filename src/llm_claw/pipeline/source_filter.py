@@ -48,7 +48,7 @@ class SourceRelevanceFilter:
         if _has_strong_entity_anchor(task, text):
             return True
         if source.source_type in {"official_html", "government_api", "webpage"} and _is_official_web_host(source.source_url):
-            return _has_operational_planning_signal(task, text)
+            return _has_operational_task_signal(task, text)
         return _has_project_token_overlap(task, text, minimum=3)
 
 
@@ -104,15 +104,29 @@ def _has_operational_planning_signal(task: AcquisitionTask, text: str) -> bool:
     return len(source_hits) >= 2 and (bool(task_hits) or "planning" in source_hits or "permit" in source_hits)
 
 
+def _has_operational_task_signal(task: AcquisitionTask, text: str) -> bool:
+    if _has_operational_planning_signal(task, text):
+        return True
+    source_tokens = set(_tokens(text))
+    task_tokens = {
+        token
+        for token in _tokens(" ".join([task.question or "", task.acquisition_instruction or "", *task.data_needed]))
+        if token not in _TASK_STOP_WORDS and len(token) >= 4
+    }
+    # An official page still needs to contain multiple task-specific concepts. This
+    # keeps exact seed sources domain-neutral without admitting generic agency pages.
+    return len(source_tokens & task_tokens) >= 2
+
+
 def _has_strong_entity_anchor(task: AcquisitionTask, text: str) -> bool:
-    normalized = _normalize(text)
+    normalized = _canonical_phrase(text)
     anchors = [
         task.entity.project_name or "",
         task.entity.name or "",
         task.entity.address or "",
     ]
     for anchor in anchors:
-        if anchor and _normalize(anchor) in normalized:
+        if anchor and _canonical_phrase(anchor) in normalized:
             return True
 
     address = task.entity.address or ""
@@ -141,5 +155,27 @@ def _normalize(value: str) -> str:
     return " ".join(_tokens(value))
 
 
+def _canonical_phrase(value: str) -> str:
+    return " ".join(token for token in _tokens(value.replace("&", " and ")) if token not in {"and", "the"})
+
+
 def _tokens(value: str) -> list[str]:
     return [token.lower() for token in re.split(r"[^A-Za-z0-9]+", value) if len(token) >= 2]
+
+
+_TASK_STOP_WORDS = {
+    "about",
+    "after",
+    "before",
+    "current",
+    "effective",
+    "evidence",
+    "information",
+    "latest",
+    "official",
+    "recommended",
+    "required",
+    "source",
+    "status",
+    "which",
+}
