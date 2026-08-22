@@ -175,6 +175,11 @@ class EvidenceItem(BaseModel):
 
 class EvidencePack(BaseModel):
     request_id: str
+    correlation_id: str | None = None
+    decision_id: str | None = None
+    run_id: str | None = None
+    step_id: str | None = None
+    input_hash: str | None = None
     entity: dict[str, Any]
     summary: str
     structured_data: dict[str, Any] = Field(default_factory=dict)

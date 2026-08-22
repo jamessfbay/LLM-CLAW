@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
 import re
 
 from llm_claw.models import AcquisitionTask, ExtractedClaim, RawSource
@@ -19,6 +21,10 @@ class EvidenceExtractor:
     def extract_claims(self, task: AcquisitionTask, sources: list[RawSource]) -> list[ExtractedClaim]:
         claims: list[ExtractedClaim] = []
         for source in sources:
+            structured_claims = _structured_api_claims(task, source)
+            if structured_claims:
+                claims.extend(structured_claims)
+                continue
             sentences = _sentences(source.text)
             if source.metadata.get("mock"):
                 excluded_mock_text = {
@@ -51,13 +57,127 @@ class EvidenceExtractor:
         return claims
 
 
+def _structured_api_claims(task: AcquisitionTask, source: RawSource) -> list[ExtractedClaim]:
+    if source.source_type != "government_api" and "json" not in str(source.metadata.get("content_type", "")).lower():
+        return []
+    try:
+        payload = json.loads(source.text)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(payload, dict) or payload.get("type") != "FeatureCollection":
+        return []
+
+    features = payload.get("features")
+    if not isinstance(features, list):
+        return []
+    changed_ids = {
+        str(value)
+        for value in task.entity.metadata.get("changed_record_ids", [])
+        if value
+    }
+    removed_ids = {
+        str(value)
+        for value in task.entity.metadata.get("removed_record_ids", [])
+        if value
+    }
+    source_updated_at = _epoch_millis_to_iso(
+        payload.get("metadata", {}).get("generated")
+        if isinstance(payload.get("metadata"), dict)
+        else None
+    )
+    removal_claims = [
+        ExtractedClaim(
+            text=(
+                f"USGS event ID {event_id} is not present in the current feed generated at "
+                f"{source_updated_at}; this may indicate that it aged out of the feed window "
+                f"or was removed. Official source citation: {source.source_url}"
+            ),
+            subject=event_id,
+            predicate="absent_from_current_feed",
+            object=source_updated_at,
+            source_id=source.id,
+            evidence_text=(
+                f"The current USGS feed generated at {source_updated_at} does not contain "
+                f"event ID {event_id}. Official source citation: {source.source_url}"
+            ),
+            confidence=0.82,
+            status="uncertain",
+        )
+        for event_id in sorted(removed_ids)
+    ]
+    if removed_ids and not changed_ids:
+        return removal_claims
+    selected = [
+        feature
+        for feature in features
+        if isinstance(feature, dict) and (not changed_ids or str(feature.get("id")) in changed_ids)
+    ]
+    if not selected:
+        return []
+
+    claims: list[ExtractedClaim] = removal_claims
+    for feature in selected:
+        properties = feature.get("properties")
+        geometry = feature.get("geometry")
+        if not isinstance(properties, dict) or properties.get("type") != "earthquake":
+            continue
+        coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+        if not isinstance(coordinates, list) or len(coordinates) < 3:
+            coordinates = [None, None, None]
+        event_id = str(feature.get("id") or properties.get("code") or "unknown")
+        event_url = str(properties.get("url") or source.source_url)
+        magnitude = properties.get("mag")
+        place = str(properties.get("place") or "unknown location")
+        status = str(properties.get("status") or "unknown")
+        alert = properties.get("alert")
+        tsunami = int(properties.get("tsunami") or 0)
+        event_time = _epoch_millis_to_iso(properties.get("time"))
+        updated_time = _epoch_millis_to_iso(properties.get("updated"))
+        evidence_text = (
+            f"USGS event ID {event_id}; magnitude {magnitude}; event time {event_time}; "
+            f"updated time {updated_time}; place {place}; coordinates "
+            f"{coordinates[0]}, {coordinates[1]}; depth {coordinates[2]} km; "
+            f"review status {status}; alert {alert or 'none'}; tsunami indicator {tsunami}. "
+            f"Official source citation: {event_url}"
+        )
+        claims.append(
+            ExtractedClaim(
+                text=evidence_text,
+                subject=event_id,
+                predicate="reported_earthquake_event",
+                object=place,
+                source_id=source.id,
+                evidence_text=evidence_text,
+                confidence=0.96,
+            )
+        )
+    return claims
+
+
+def _epoch_millis_to_iso(value: object) -> str:
+    try:
+        return datetime.fromtimestamp(float(value) / 1000, tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return "unknown"
+
+
 def _sentences(text: str) -> list[str]:
     parts: list[str] = []
-    for line in text.splitlines():
-        cleaned = re.sub(r"\s+", " ", line).strip()
-        if not cleaned:
-            continue
+    lines = [
+        cleaned
+        for line in text.splitlines()
+        if (cleaned := re.sub(r"\s+", " ", line).strip())
+    ]
+    for cleaned in lines:
         parts.extend(re.split(r"(?<=[.!?。])\s+", cleaned))
+    # Government detail pages often render a field label and its value in
+    # adjacent block elements. Preserve short windows so "Accession No." can be
+    # extracted together with the identifier that follows it.
+    for start in range(len(lines)):
+        for width in range(2, 5):
+            window = " ".join(lines[start:start + width])
+            if len(window) >= 20:
+                parts.append(window)
     return [part.strip() for part in parts if len(part.strip()) >= 20]
 
 

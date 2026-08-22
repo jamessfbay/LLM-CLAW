@@ -1,0 +1,21 @@
+{
+  "protocol_version": "1.0",
+  "command_id": "cmd_contract",
+  "correlation_id": "corr_contract",
+  "decision_id": "decision_contract",
+  "run_id": "run_contract",
+  "step_id": "step_contract",
+  "engine": "llm-claw",
+  "operation": "contract.test",
+  "idempotency_key": "contract:test",
+  "input_hash": "abc123",
+  "permission_profile": {
+    "network_access": false,
+    "writable_roots": [],
+    "readable_roots": [],
+    "environment_allowlist": [],
+    "mutates": false,
+    "approval_required": false
+  },
+  "input": {"value": 1}
+}

@@ -24,6 +24,7 @@ class Settings(BaseModel):
     gemini_model: str = "gemini-3.5-flash"
     search_api_key: str | None = None
     provider_max_workers: int = 4
+    source_user_agent: str = "llm-claw/0.1"
 
     @classmethod
     def from_env(cls, workspace: Path | None = None) -> "Settings":
@@ -46,6 +47,11 @@ class Settings(BaseModel):
             gemini_model=os.getenv("LLM_CLAW_GEMINI_MODEL", "gemini-3.5-flash"),
             search_api_key=os.getenv("SEARCH_API_KEY"),
             provider_max_workers=int(os.getenv("LLM_CLAW_PROVIDER_MAX_WORKERS", "4")),
+            source_user_agent=(
+                os.getenv("CLAW_SOURCE_USER_AGENT")
+                or os.getenv("NOX_SEC_USER_AGENT")
+                or "llm-claw/0.1"
+            ),
         )
 
     def provider_enabled(self, provider: ProviderName) -> bool:

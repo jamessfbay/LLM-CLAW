@@ -103,7 +103,8 @@ class SourceFetcher:
         return source, _diagnostic(candidate, status="fetched", fetch_mode="file", bytes=len(data), text_length=len(text), raw_path=str(copy_path))
 
     def _http_source(self, candidate: CandidateSource) -> tuple[RawSource | None, SourceFetchDiagnostic]:
-        request = Request(candidate.url, headers={"User-Agent": "llm-claw/0.1"})
+        user_agent = self.settings.source_user_agent
+        request = Request(candidate.url, headers={"User-Agent": user_agent})
         fetch_mode = "http"
         http_status: int | None = None
         final_url: str | None = None
@@ -116,10 +117,10 @@ class SourceFetcher:
                 final_url = response.geturl()
         except Exception as exc:
             error = str(exc)
-            fetched = _curl_fetch(candidate.url)
+            fetched = _curl_fetch(candidate.url, user_agent)
             if not fetched:
                 if os.getenv("CLAW_ENABLE_BROWSER_FETCH") == "1":
-                    browser = _browser_fetch(candidate.url)
+                    browser = _browser_fetch(candidate.url, user_agent)
                     if browser:
                         data, content_type, final_url = browser
                         fetch_mode = "browser"
@@ -133,21 +134,21 @@ class SourceFetcher:
         digest, suffix, path, text = self._persist_response(candidate, data, content_type)
         drop_reason = _drop_reason(text, raw_data=data, http_status=http_status)
         if drop_reason and fetch_mode == "http":
-            curl_retry = _curl_fetch(candidate.url)
+            curl_retry = _curl_fetch(candidate.url, user_agent)
             if curl_retry:
                 data, content_type = curl_retry
                 fetch_mode = "curl"
                 digest, suffix, path, text = self._persist_response(candidate, data, content_type)
                 drop_reason = _drop_reason(text, raw_data=data, http_status=http_status)
         if drop_reason and fetch_mode != "node":
-            node_retry = _node_fetch(candidate.url)
+            node_retry = _node_fetch(candidate.url, user_agent)
             if node_retry:
                 data, content_type = node_retry
                 fetch_mode = "node"
                 digest, suffix, path, text = self._persist_response(candidate, data, content_type)
                 drop_reason = _drop_reason(text, raw_data=data, http_status=http_status)
         if drop_reason and fetch_mode != "browser" and os.getenv("CLAW_ENABLE_BROWSER_FETCH") == "1":
-            browser = _browser_fetch(candidate.url)
+            browser = _browser_fetch(candidate.url, user_agent)
             if browser:
                 data, content_type, final_url = browser
                 fetch_mode = "browser"
@@ -170,6 +171,8 @@ class SourceFetcher:
         source_type = (
             "youtube"
             if _is_youtube_url(candidate.url)
+            else "government_api"
+            if suffix == ".json" or candidate.source_type == "government_api"
             else "official_pdf"
             if suffix == ".pdf" and candidate.is_official
             else "pdf"
@@ -209,7 +212,13 @@ class SourceFetcher:
         content_type: str,
     ) -> tuple[str, str, Path, str]:
         digest = _hash(data)
-        suffix = ".pdf" if "pdf" in content_type or candidate.url.lower().endswith(".pdf") else ".html"
+        suffix = (
+            ".pdf"
+            if "pdf" in content_type or candidate.url.lower().endswith(".pdf")
+            else ".json"
+            if "json" in content_type or candidate.url.lower().endswith((".json", ".geojson"))
+            else ".html"
+        )
         path = self.raw_dir / f"{digest}{suffix}"
         path.write_bytes(data)
         return digest, suffix, path, _extract_file_text(path, data)
@@ -231,6 +240,8 @@ def _extract_file_text(path: Path, data: bytes) -> str:
             return "\n\n".join(f"[Page {index + 1}]\n{text}" for index, text in enumerate(pages))
         except Exception:
             return ""
+    if path.suffix.lower() in {".json", ".geojson"}:
+        return data.decode("utf-8", errors="ignore")
     text = data.decode("utf-8", errors="ignore")
     return _html_to_text(text)
 
@@ -285,13 +296,18 @@ class _ReadableHTMLParser(HTMLParser):
         self._chunks.append(value)
 
     def text(self) -> str:
-        return re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+", " ", "\n".join(self._chunks))).strip()
+        # Inline nodes such as "CIK <a>000123</a>" must remain on one line so
+        # downstream extractors can keep field labels attached to their values.
+        text = " ".join(self._chunks)
+        text = re.sub(r"[ \t]*\n[ \t]*", "\n", text)
+        text = re.sub(r"[ \t]+", " ", text)
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def _curl_fetch(url: str) -> tuple[bytes, str] | None:
+def _curl_fetch(url: str, user_agent: str) -> tuple[bytes, str] | None:
     try:
         result = subprocess.run(
-            ["curl", "-L", "-sS", "-A", "Mozilla/5.0", url],
+            ["curl", "-L", "-sS", "-A", user_agent, url],
             check=False,
             capture_output=True,
             timeout=20,
@@ -300,17 +316,23 @@ def _curl_fetch(url: str) -> tuple[bytes, str] | None:
         return None
     if result.returncode != 0 or not result.stdout:
         return None
-    content_type = "application/pdf" if url.lower().endswith(".pdf") else "text/html"
+    content_type = (
+        "application/pdf"
+        if url.lower().endswith(".pdf")
+        else "application/json"
+        if url.lower().endswith((".json", ".geojson"))
+        else "text/html"
+    )
     return result.stdout, content_type
 
 
-def _browser_fetch(url: str) -> tuple[bytes, str, str | None] | None:
+def _browser_fetch(url: str, user_agent: str) -> tuple[bytes, str, str | None] | None:
     try:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
+            page = browser.new_page(user_agent=user_agent)
             response = page.goto(url, wait_until="networkidle", timeout=30000)
             html = page.content()
             final_url = page.url
@@ -321,15 +343,15 @@ def _browser_fetch(url: str) -> tuple[bytes, str, str | None] | None:
         return None
 
 
-def _node_fetch(url: str) -> tuple[bytes, str] | None:
+def _node_fetch(url: str, user_agent: str) -> tuple[bytes, str] | None:
     script = (
-        "const r=await fetch(process.argv[1],{redirect:'follow',headers:{'user-agent':'NOX-Source-Monitor/0.1 (+local decision runtime)'}});"
+        "const r=await fetch(process.argv[1],{redirect:'follow',headers:{'user-agent':process.argv[2]}});"
         "if(!r.ok)process.exit(2);"
         "const b=Buffer.from(await r.arrayBuffer());process.stdout.write(b);"
     )
     try:
         result = subprocess.run(
-            ["node", "--input-type=module", "-e", script, url],
+            ["node", "--input-type=module", "-e", script, url, user_agent],
             check=False,
             capture_output=True,
             timeout=30,
@@ -338,7 +360,13 @@ def _node_fetch(url: str) -> tuple[bytes, str] | None:
         return None
     if result.returncode != 0 or not result.stdout:
         return None
-    content_type = "application/pdf" if url.lower().endswith(".pdf") else "text/html"
+    content_type = (
+        "application/pdf"
+        if url.lower().endswith(".pdf")
+        else "application/json"
+        if url.lower().endswith((".json", ".geojson"))
+        else "text/html"
+    )
     return result.stdout, content_type
 
 
@@ -355,6 +383,7 @@ def _is_blocked_response(text: str) -> bool:
         "request blocked",
         "automated access to our sites must comply",
         "request rate threshold exceeded",
+        "your request originates from an undeclared automated tool",
     ]
     return any(marker in lower for marker in blocked_markers)
 
@@ -364,7 +393,11 @@ def _drop_reason(text: str, *, raw_data: bytes | None = None, http_status: int |
     raw_lower = (raw_data or b"").lower()
     if http_status == 404 or b'data-headerstatus="404"' in raw_lower or b"data-headerstatus='404'" in raw_lower:
         return "http_404"
-    if "request rate threshold exceeded" in lower or "automated access to our sites must comply" in lower:
+    if (
+        "request rate threshold exceeded" in lower
+        or "automated access to our sites must comply" in lower
+        or "your request originates from an undeclared automated tool" in lower
+    ):
         return "rate_limited"
     if not text.strip():
         return "empty_text"

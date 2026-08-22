@@ -15,6 +15,12 @@ def test_sec_rate_limit_page_is_classified() -> None:
     assert _drop_reason(text) == "rate_limited"
 
 
+def test_sec_undeclared_automated_tool_page_is_classified() -> None:
+    text = "SEC.gov | Your Request Originates from an Undeclared Automated Tool"
+
+    assert _drop_reason(text) == "rate_limited"
+
+
 def test_faa_404_template_is_classified_from_raw_html() -> None:
     raw = b'<html data-headerstatus="404"><title>Federal Aviation Administration</title></html>'
 

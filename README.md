@@ -34,6 +34,17 @@ Evidence Packs are always persisted under `.llm_claw/evidence_packs/`. When `exp
 
 For government sites that return CDN block pages, source acquisition retries Python HTTP, curl, a dependency-free Node fetch fallback, and optionally Playwright when `CLAW_ENABLE_BROWSER_FETCH=1`. Every attempt remains visible in `source_fetch_diagnostics`.
 
+### NOX Runtime Protocol
+
+`run` and `export-kg` support the optional NOX v1 harness protocol:
+
+```bash
+llm-claw run task.json --workspace . --event-stream --runtime-context runtime-command.json
+llm-claw export-kg pack.json --workspace . --event-stream --runtime-context runtime-command.json
+```
+
+The commands emit NDJSON progress, artifact and terminal events. Operation receipts under `.llm_claw/operations/` make retries idempotent; reusing a key with a different input hash is rejected. Without `--event-stream`, CLI behavior is unchanged.
+
 ## Environment
 
 - `LLM_CLAW_WORKSPACE`: workspace path; defaults to current directory.
