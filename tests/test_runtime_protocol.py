@@ -17,7 +17,20 @@ def test_runtime_fixture_and_ndjson_event(tmp_path: Path):
     stream = StringIO()
     event = RuntimeEmitter(command, stream).emit("step.started", "running", payload={"phase": "test"})
     assert event.protocol_version == "1.0"
-    assert json.loads(stream.getvalue())["run_id"] == "run_contract"
+    emitted = json.loads(stream.getvalue())
+    assert emitted["run_id"] == "run_contract"
+    assert emitted["tenant_context"] == {"organization_id": "local", "workspace_id": "default"}
+
+
+def test_runtime_event_propagates_explicit_tenant_context():
+    payload = json.loads((Path(__file__).parent / "fixtures" / "runtime_command_v1.json").read_text())
+    payload["tenant_context"] = {"organization_id": "org_1", "workspace_id": "workspace_1", "actor_id": "user_1"}
+    command = RuntimeCommand.model_validate(payload)
+    stream = StringIO()
+
+    RuntimeEmitter(command, stream).emit("step.started", "running")
+
+    assert json.loads(stream.getvalue())["tenant_context"] == payload["tenant_context"]
 
 
 def test_operation_receipt_is_idempotent_and_rejects_hash_conflict(tmp_path: Path):

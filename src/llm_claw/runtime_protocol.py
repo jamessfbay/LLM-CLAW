@@ -23,6 +23,12 @@ class PermissionProfile(BaseModel):
     approval_required: bool = False
 
 
+class TenantContext(BaseModel):
+    organization_id: str = "local"
+    workspace_id: str = "default"
+    actor_id: str | None = None
+
+
 class RuntimeCommand(BaseModel):
     protocol_version: Literal["1.0"] = PROTOCOL_VERSION
     command_id: str
@@ -35,6 +41,7 @@ class RuntimeCommand(BaseModel):
     idempotency_key: str
     input_hash: str
     deadline_at: str | None = None
+    tenant_context: TenantContext = Field(default_factory=TenantContext)
     permission_profile: PermissionProfile
     input: dict[str, Any] = Field(default_factory=dict)
 
@@ -56,6 +63,7 @@ class RuntimeEvent(BaseModel):
     step_id: str
     engine: Literal["nox", "llm-claw", "llm-kg", "llm-kee", "human"]
     operation: str
+    tenant_context: TenantContext = Field(default_factory=TenantContext)
     kind: Literal[
         "run.started", "run.completed", "run.failed",
         "step.started", "step.progress", "step.completed", "step.failed",
@@ -102,13 +110,14 @@ class RuntimeEmitter:
             step_id=self.command.step_id,
             engine=self.command.engine,
             operation=self.command.operation,
+            tenant_context=self.command.tenant_context,
             kind=kind,
             status=status,
             references=references or {},
             payload=payload or {},
             error=error,
         )
-        self.stream.write(event.model_dump_json() + "\n")
+        self.stream.write(event.model_dump_json(exclude_none=True) + "\n")
         self.stream.flush()
         return event
 
