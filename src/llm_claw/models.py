@@ -46,6 +46,7 @@ class SourcePolicy(BaseModel):
     prefer_official_sources: bool = True
     require_citations: bool = True
     require_raw_source_fetch: bool = True
+    max_sources: int = Field(default=50, ge=1, le=200)
 
 
 class ProviderPolicy(BaseModel):
@@ -57,10 +58,10 @@ class ProviderPolicy(BaseModel):
 
 class AcquisitionTask(BaseModel):
     id: str = Field(default_factory=lambda: new_id("task"))
-    domain: str = "real_estate"
-    task_type: str = "project_research"
+    domain: str = "generic"
+    task_type: str = "evidence_acquisition"
     entity: EntityInput
-    data_needed: list[str] = Field(default_factory=list)
+    data_needed: list[str]
     question: str | None = None
     acquisition_instruction: str | None = None
     freshness: Literal["latest", "recent", "any"] = "latest"
@@ -72,7 +73,9 @@ class AcquisitionTask(BaseModel):
     @field_validator("data_needed")
     @classmethod
     def require_data_needed(cls, value: list[str]) -> list[str]:
-        return value or ["planning status", "staff report", "public comments", "CEQA status"]
+        if not value:
+            raise ValueError("data_needed must explicitly describe the observations to acquire")
+        return value
 
 
 class PlannedQuery(BaseModel):
@@ -103,6 +106,9 @@ class ProviderTrace(BaseModel):
     message: str | None = None
     candidate_count: int = 0
     duration_ms: int | None = None
+    model: str | None = None
+    prompt_version: str | None = None
+    usage: dict[str, int] | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -159,6 +165,8 @@ class VerificationNote(BaseModel):
 
 
 class EvidenceItem(BaseModel):
+    contract_version: Literal["evidence-artifact/2.0"] = "evidence-artifact/2.0"
+    id: str = Field(default_factory=lambda: new_id("ev"))
     claim: str
     source_title: str
     source_url: str
@@ -171,9 +179,28 @@ class EvidenceItem(BaseModel):
     page_number: int | None = None
     source_id: str | None = None
     claim_id: str | None = None
+    raw_content_hash: str | None = None
+    quote_start: int | None = Field(default=None, ge=0)
+    quote_end: int | None = Field(default=None, ge=0)
+    quote_match: Literal["exact", "unbound"] = "unbound"
+    observed_at: datetime | None = None
+    extractor_version: str = "llm-claw-evidence-extractor/1"
+
+    @property
+    def decision_grade(self) -> bool:
+        return bool(
+            self.source_id
+            and self.raw_content_hash
+            and self.quote_match == "exact"
+            and self.quote_start is not None
+            and self.quote_end is not None
+            and self.quote_end > self.quote_start
+        )
 
 
 class EvidencePack(BaseModel):
+    contract_version: Literal["observer-output/2.0"] = "observer-output/2.0"
+    capability_role: Literal["observer"] = "observer"
     request_id: str
     correlation_id: str | None = None
     decision_id: str | None = None

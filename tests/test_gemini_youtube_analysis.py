@@ -39,20 +39,25 @@ def test_gemini_youtube_analysis_updates_source_text_and_metadata(tmp_path: Path
     def fake_generate_content_without_tools(prompt):  # type: ignore[no-untyped-def]
         captured_prompt["text"] = prompt
         return {
-        "candidates": [
-            {
-                "content": {
-                    "parts": [
-                        {
-                            "text": (
-                                "156 California Avenue Mixed-Use Project appears in a City Council meeting video. "
-                                "The video discusses planning status and public comments."
-                            )
-                        }
-                    ]
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": (
+                                    "156 California Avenue Mixed-Use Project appears in a City Council meeting video. "
+                                    "The video discusses planning status and public comments."
+                                )
+                            }
+                        ]
+                    }
                 }
-            }
-        ]
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 120,
+                "candidatesTokenCount": 30,
+                "totalTokenCount": 150,
+            },
         }
 
     provider._generate_content_without_tools = fake_generate_content_without_tools  # type: ignore[method-assign]
@@ -65,6 +70,9 @@ def test_gemini_youtube_analysis_updates_source_text_and_metadata(tmp_path: Path
     assert analyzed.metadata["analysis_provider"] == "gemini"
     assert trace.provider == "gemini"
     assert trace.status == "ok"
+    assert trace.model == provider.settings.gemini_model
+    assert trace.prompt_version == "youtube-source-analysis/1"
+    assert trace.usage == {"input_tokens": 120, "output_tokens": 30, "total_tokens": 150}
     assert "City Council Meeting - June 1, 2026" in captured_prompt["text"]
     assert "https://www.youtube.com/watch?v=Cczy-CGO8IE" in captured_prompt["text"]
     assert "Find the specific video URL" in captured_prompt["text"]

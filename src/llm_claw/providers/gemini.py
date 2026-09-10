@@ -15,6 +15,7 @@ from llm_claw.providers.openai_web_search import _build_prompt, _parse_json_rows
 
 class GeminiProvider:
     name = "gemini"
+    prompt_version = "source-discovery/2"
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -48,6 +49,9 @@ class GeminiProvider:
             query=query.text,
             candidate_count=len(candidates),
             message=f"Gemini web search returned {len(candidates)} candidate source(s).",
+            model=self.settings.gemini_model,
+            prompt_version=self.prompt_version,
+            usage=_usage(payload),
         )
 
     def _generate_content(self, prompt: str) -> dict[str, Any]:
@@ -71,6 +75,7 @@ class GeminiProvider:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.settings.gemini_model}:generateContent?{params}"
         body = {
             "contents": [{"parts": parts}],
+            "generationConfig": {"temperature": 0, "maxOutputTokens": 2048},
         }
         if tools:
             body["tools"] = tools
@@ -129,6 +134,9 @@ class GeminiProvider:
             query=source.source_url,
             candidate_count=1,
             message="Gemini summarized YouTube source content for project-relevant evidence.",
+            model=self.settings.gemini_model,
+            prompt_version="youtube-source-analysis/1",
+            usage=_usage(payload),
         )
 
     def analyze_youtube_candidate(
@@ -343,6 +351,20 @@ def _extract_text(payload: dict[str, Any]) -> str:
             if isinstance(text, str):
                 chunks.append(text)
     return "\n".join(chunks)
+
+
+def _usage(payload: Any) -> dict[str, int] | None:
+    if not isinstance(payload, dict):
+        return None
+    metadata = payload.get("usageMetadata")
+    if not isinstance(metadata, dict):
+        return None
+    result = {
+        "input_tokens": int(metadata.get("promptTokenCount") or 0),
+        "output_tokens": int(metadata.get("candidatesTokenCount") or 0),
+        "total_tokens": int(metadata.get("totalTokenCount") or 0),
+    }
+    return result if any(result.values()) else None
 
 
 def _extract_grounding_urls(payload: dict[str, Any]) -> list[tuple[str, str]]:

@@ -25,6 +25,13 @@ class SourceRelevanceFilter:
         if _is_official_youtube_channel(candidate.url):
             return True
 
+        if task.domain == "commercial_discovery":
+            return _has_commercial_task_overlap(task, " ".join(
+                part
+                for part in [candidate.title, candidate.url, candidate.snippet, candidate.publisher or ""]
+                if part
+            ))
+
         text = " ".join(
             part
             for part in [candidate.title, candidate.url, candidate.snippet, candidate.publisher or ""]
@@ -45,11 +52,23 @@ class SourceRelevanceFilter:
             return False
 
         text = " ".join([source.source_title, source.source_url, source.text[:5000]])
+        if task.domain == "commercial_discovery":
+            return _has_commercial_task_overlap(task, text)
         if _has_strong_entity_anchor(task, text):
             return True
         if source.source_type in {"official_html", "government_api", "webpage"} and _is_official_web_host(source.source_url):
             return _has_operational_task_signal(task, text)
         return _has_project_token_overlap(task, text, minimum=3)
+
+
+def _has_commercial_task_overlap(task: AcquisitionTask, text: str) -> bool:
+    source_tokens = set(_tokens(text))
+    task_tokens = {
+        token
+        for token in _tokens(" ".join([task.question or "", task.acquisition_instruction or "", *task.data_needed]))
+        if token not in _COMMERCIAL_STOP_WORDS and len(token) >= 4
+    }
+    return len(source_tokens & task_tokens) >= 2
 
 
 def _is_blocked_url(url: str) -> bool:
@@ -178,4 +197,21 @@ _TASK_STOP_WORDS = {
     "source",
     "status",
     "which",
+}
+
+_COMMERCIAL_STOP_WORDS = _TASK_STOP_WORDS | {
+    "alternative",
+    "broader",
+    "commercial",
+    "counter",
+    "discovery",
+    "independently",
+    "market",
+    "problem",
+    "public",
+    "recent",
+    "search",
+    "software",
+    "switching",
+    "workaround",
 }

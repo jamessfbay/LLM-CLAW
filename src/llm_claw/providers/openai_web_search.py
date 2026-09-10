@@ -11,6 +11,7 @@ from llm_claw.models import AcquisitionTask, CandidateSource, PlannedQuery, Prov
 
 class OpenAIWebSearchProvider:
     name = "openai_web_search"
+    prompt_version = "source-discovery/2"
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -45,6 +46,9 @@ class OpenAIWebSearchProvider:
             query=query.text,
             candidate_count=len(candidates),
             message=f"OpenAI web search returned {len(candidates)} candidate source(s).",
+            model=self.settings.openai_model,
+            prompt_version=self.prompt_version,
+            usage=_usage(payload.get("usage")),
         )
 
     def _responses_request(self, prompt: str) -> dict[str, Any]:
@@ -53,6 +57,7 @@ class OpenAIWebSearchProvider:
             "tools": [{"type": "web_search"}],
             "tool_choice": "auto",
             "input": prompt,
+            "max_output_tokens": 2048,
         }
         request = Request(
             "https://api.openai.com/v1/responses",
@@ -72,10 +77,16 @@ def _build_prompt(task: AcquisitionTask, query: PlannedQuery) -> str:
     address = task.entity.address or ""
     city = task.entity.city or ""
     needs = ", ".join(task.data_needed)
+    source_guidance = (
+        "Search the public web for direct evidence. Preserve community discussions, technical issues, public job postings, "
+        "company pages, independent reporting, official documents, and counter-evidence. Never invent a URL or contact detail."
+        if task.domain != "real_estate"
+        else "Prefer city/government pages, CEQA records, official PDFs, planning agendas, staff reports, and permit records."
+    )
     return (
         "Find authoritative source URLs for a source-linked data acquisition agent.\n"
         "Return only official or high-quality candidate source pages, not a final answer.\n"
-        "Prefer city/government pages, CEQA records, official PDFs, planning agendas, staff reports, and permit records.\n"
+        f"{source_guidance}\n"
         "Return JSON only with this shape: "
         '[{"title":"...", "url":"https://...", "snippet":"...", "publisher":"...", "is_official":true}].\n'
         f"Entity: {entity}\n"
@@ -184,3 +195,14 @@ def _looks_relevant(url: str, task: AcquisitionTask) -> bool:
     terms = [task.entity.city or "", task.entity.address or "", task.entity.display_name]
     tokens = [token.lower().replace(" ", "-") for token in terms if token]
     return _looks_official(url) or any(token and token.split(",")[0] in lower for token in tokens)
+
+
+def _usage(value: Any) -> dict[str, int] | None:
+    if not isinstance(value, dict):
+        return None
+    result = {
+        "input_tokens": int(value.get("input_tokens") or 0),
+        "output_tokens": int(value.get("output_tokens") or 0),
+        "total_tokens": int(value.get("total_tokens") or 0),
+    }
+    return result if any(result.values()) else None

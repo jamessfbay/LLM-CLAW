@@ -7,6 +7,7 @@ def export_for_llm_kg(pack: EvidencePack) -> dict:
     documents = []
     evidence_records = []
     claims = []
+    raw_sources = {source.id: source for source in pack.raw_sources}
 
     for source in pack.raw_sources:
         documents.append(
@@ -27,7 +28,14 @@ def export_for_llm_kg(pack: EvidencePack) -> dict:
         )
 
     for item in pack.evidence:
-        evidence_id = item.claim_id.replace("claim_", "ev_") if item.claim_id else None
+        evidence_id = item.id
+        source = raw_sources.get(item.source_id or "")
+        decision_grade = bool(
+            item.decision_grade
+            and source
+            and source.content_hash == item.raw_content_hash
+            and source.text[item.quote_start:item.quote_end] == item.evidence_text
+        )
         evidence_records.append(
             {
                 "id": evidence_id,
@@ -37,8 +45,17 @@ def export_for_llm_kg(pack: EvidencePack) -> dict:
                 "url": item.source_url,
                 "source_mode": "native_text",
                 "confidence": item.confidence,
-                "review_state": "auto_accepted",
-                "governance_notes": "Created by LLM-CLAW from raw fetched source.",
+                "review_state": "auto_accepted" if decision_grade else "pending_review",
+                "source_content_hash": item.raw_content_hash,
+                "quote_start": item.quote_start,
+                "quote_end": item.quote_end,
+                "observed_at": item.observed_at.isoformat() if item.observed_at else None,
+                "extractor_version": item.extractor_version,
+                "governance_notes": (
+                    "Exact quote bound to an immutable LLM-CLAW raw source."
+                    if decision_grade
+                    else "Quote is not position-bound to an immutable raw source and requires review."
+                ),
             }
         )
         claims.append(
@@ -48,14 +65,16 @@ def export_for_llm_kg(pack: EvidencePack) -> dict:
                 "source_ids": [item.source_id] if item.source_id else [],
                 "evidence_ids": [evidence_id] if evidence_id else [],
                 "confidence": item.confidence,
-                "status": "active" if item.evidence_text else "uncertain",
-                "review_state": "auto_accepted" if item.evidence_text else "pending_review",
+                "status": "active" if decision_grade else "uncertain",
+                "review_state": "auto_accepted" if decision_grade else "pending_review",
+                "observed_at": item.observed_at.isoformat() if item.observed_at else None,
                 "governance_notes": "LLM provider summaries were not used as final facts.",
             }
         )
 
     return {
         "format": "llm-kg-import",
+        "contract_version": "evidence-import/2.0",
         "request_id": pack.request_id,
         "documents": documents,
         "evidence": evidence_records,

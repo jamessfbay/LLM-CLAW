@@ -10,11 +10,25 @@ def test_kg_export_maps_pack_to_documents_evidence_and_claims(tmp_path: Path) ->
     payload = export_for_llm_kg(pack)
 
     assert payload["format"] == "llm-kg-import"
+    assert payload["contract_version"] == "evidence-import/2.0"
     assert payload["documents"]
     assert payload["evidence"]
     assert payload["claims"]
     assert payload["claims"][0]["evidence_ids"]
     assert payload["claims"][0]["review_state"] == "auto_accepted"
+    assert payload["evidence"][0]["source_content_hash"]
+    assert payload["evidence"][0]["quote_end"] > payload["evidence"][0]["quote_start"]
+
+
+def test_kg_export_downgrades_tampered_quote_binding(tmp_path: Path) -> None:
+    pack = run_task(Path("examples/project_research.json"), workspace=tmp_path)
+    pack.evidence[0].quote_start = 0
+    pack.evidence[0].quote_end = len(pack.evidence[0].evidence_text)
+
+    payload = export_for_llm_kg(pack)
+
+    assert payload["evidence"][0]["review_state"] == "pending_review"
+    assert payload["claims"][0]["status"] == "uncertain"
 
 
 def test_cli_run_writes_valid_evidence_pack(tmp_path: Path) -> None:

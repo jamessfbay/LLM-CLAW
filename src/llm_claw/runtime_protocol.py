@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import builtins
 from datetime import UTC, datetime
+import fcntl
 import hashlib
 import json
 from pathlib import Path
@@ -126,6 +128,7 @@ class OperationReceiptStore:
     def __init__(self, workspace: Path, store_name: str) -> None:
         self.root = workspace / store_name / "operations"
         self.root.mkdir(parents=True, exist_ok=True)
+        self._locks: dict[str, Any] = {}
 
     def get(self, idempotency_key: str) -> OperationReceipt | None:
         path = self._path(idempotency_key)
@@ -134,26 +137,36 @@ class OperationReceiptStore:
         return OperationReceipt.model_validate_json(path.read_text(encoding="utf-8"))
 
     def begin(self, command: RuntimeCommand) -> OperationReceipt:
-        existing = self.get(command.idempotency_key)
-        if existing:
-            if existing.input_hash != command.input_hash:
-                raise ValueError("idempotency key was already used with a different input hash")
-            return existing
-        receipt = OperationReceipt(
-            idempotency_key=command.idempotency_key,
-            operation=command.operation,
-            input_hash=command.input_hash,
-            status="running",
-            started_at=datetime.now(UTC).isoformat(),
-        )
-        self._write(receipt)
-        return receipt
+        self._acquire(command.idempotency_key)
+        try:
+            existing = self.get(command.idempotency_key)
+            if existing:
+                if existing.input_hash != command.input_hash:
+                    raise ValueError("idempotency key was already used with a different input hash")
+                if existing.status != "running":
+                    self._release(command.idempotency_key)
+                return existing
+            receipt = OperationReceipt(
+                idempotency_key=command.idempotency_key,
+                operation=command.operation,
+                input_hash=command.input_hash,
+                status="running",
+                started_at=datetime.now(UTC).isoformat(),
+            )
+            self._write(receipt)
+            return receipt
+        except Exception:
+            self._release(command.idempotency_key)
+            raise
 
     def complete(self, receipt: OperationReceipt, status: RuntimeStatus, output: dict[str, Any]) -> OperationReceipt:
         receipt.status = status
         receipt.output = output
         receipt.completed_at = datetime.now(UTC).isoformat()
-        self._write(receipt)
+        try:
+            self._write(receipt)
+        finally:
+            self._release(receipt.idempotency_key)
         return receipt
 
     def interrupt(self, receipt: OperationReceipt, message: str) -> OperationReceipt:
@@ -161,6 +174,21 @@ class OperationReceiptStore:
 
     def _path(self, key: str) -> Path:
         return self.root / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()}.json"
+
+    def _acquire(self, key: str) -> None:
+        handle = self._path(key).with_suffix(".lock").open("a+")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.close()
+            raise builtins.RuntimeError("operation with this idempotency key is already running") from None
+        self._locks[key] = handle
+
+    def _release(self, key: str) -> None:
+        handle = self._locks.pop(key, None)
+        if handle is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
 
     def _write(self, receipt: OperationReceipt) -> None:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=self.root, delete=False) as handle:

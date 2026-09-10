@@ -17,7 +17,7 @@ def test_source_fetcher_reads_local_html_fixture(tmp_path: Path) -> None:
         is_official=True,
     )
 
-    sources = SourceFetcher(Settings(workspace=tmp_path)).fetch([candidate])
+    sources = SourceFetcher(Settings(workspace=tmp_path, source_file_roots=[fixture.parent])).fetch([candidate])
 
     assert len(sources) == 1
     assert sources[0].source_type == "local_html"
@@ -35,7 +35,7 @@ def test_source_fetcher_records_diagnostics_for_local_html(tmp_path: Path) -> No
         is_official=True,
     )
 
-    sources, diagnostics = SourceFetcher(Settings(workspace=tmp_path)).fetch_with_diagnostics([candidate])
+    sources, diagnostics = SourceFetcher(Settings(workspace=tmp_path, source_file_roots=[fixture.parent])).fetch_with_diagnostics([candidate])
 
     assert len(sources) == 1
     assert len(diagnostics) == 1
@@ -54,7 +54,7 @@ def test_source_fetcher_records_drop_reason_for_empty_source(tmp_path: Path) -> 
         url=empty.resolve().as_uri(),
     )
 
-    sources, diagnostics = SourceFetcher(Settings(workspace=tmp_path)).fetch_with_diagnostics([candidate])
+    sources, diagnostics = SourceFetcher(Settings(workspace=tmp_path, source_file_roots=[tmp_path])).fetch_with_diagnostics([candidate])
 
     assert sources == []
     assert len(diagnostics) == 1
@@ -87,20 +87,20 @@ def test_browser_fallback_retries_a_blocked_http_response(tmp_path: Path, monkey
         is_official=True,
     )
     monkeypatch.setenv("CLAW_ENABLE_BROWSER_FETCH", "1")
-    monkeypatch.setattr(source_fetcher, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("blocked")))
+    monkeypatch.setattr(source_fetcher, "_open_url", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("blocked")))
     monkeypatch.setattr(source_fetcher, "_curl_fetch", lambda _url, _user_agent: (b"<html>Access denied</html>", "text/html"))
     monkeypatch.setattr(source_fetcher, "_node_fetch", lambda _url, _user_agent: None)
     monkeypatch.setattr(
         source_fetcher,
         "_browser_fetch",
-        lambda _url, _user_agent: (
+        lambda _url, _user_agent, _allowed_hosts: (
             b"<html><body><h1>Planning projects</h1><p>Permit and entitlement review information is available.</p></body></html>",
             "text/html",
             candidate.url,
         ),
     )
 
-    sources, diagnostics = SourceFetcher(Settings(workspace=tmp_path)).fetch_with_diagnostics([candidate])
+    sources, diagnostics = SourceFetcher(Settings(workspace=tmp_path, source_allowed_hosts=["example.test"])).fetch_with_diagnostics([candidate])
 
     assert len(sources) == 1
     assert diagnostics[0].status == "fetched"
@@ -115,7 +115,7 @@ def test_node_fallback_recovers_when_http_and_curl_are_blocked(tmp_path: Path, m
         url="https://example.test/planning",
         is_official=True,
     )
-    monkeypatch.setattr(source_fetcher, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("blocked")))
+    monkeypatch.setattr(source_fetcher, "_open_url", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("blocked")))
     monkeypatch.setattr(source_fetcher, "_curl_fetch", lambda _url, _user_agent: (b"<html>Access denied</html>", "text/html"))
     monkeypatch.setattr(
         source_fetcher,
@@ -126,8 +126,17 @@ def test_node_fallback_recovers_when_http_and_curl_are_blocked(tmp_path: Path, m
         ),
     )
 
-    sources, diagnostics = SourceFetcher(Settings(workspace=tmp_path)).fetch_with_diagnostics([candidate])
+    sources, diagnostics = SourceFetcher(Settings(workspace=tmp_path, source_allowed_hosts=["example.test"])).fetch_with_diagnostics([candidate])
 
     assert len(sources) == 1
     assert diagnostics[0].fetch_mode == "node"
     assert diagnostics[0].status == "fetched"
+
+
+def test_source_fetcher_blocks_private_network_targets(tmp_path: Path) -> None:
+    candidate = CandidateSource(provider="crawler", title="metadata", url="http://169.254.169.254/latest/meta-data")
+
+    sources, diagnostics = SourceFetcher(Settings(workspace=tmp_path)).fetch_with_diagnostics([candidate])
+
+    assert sources == []
+    assert diagnostics[0].drop_reason == "private_network_not_allowed"

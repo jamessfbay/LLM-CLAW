@@ -10,6 +10,13 @@ class DataNeedPlanner:
 
 class QueryPlanner:
     def plan(self, task: AcquisitionTask, data_needs: list[str]) -> list[PlannedQuery]:
+        if task.domain == "commercial_discovery":
+            return [
+                PlannedQuery(text=need, data_need=need, freshness=task.freshness)
+                for need in data_needs
+                if need.strip()
+            ][:20]
+
         entity = task.entity.display_name
         city = task.entity.city
         address = task.entity.address
@@ -24,10 +31,11 @@ class QueryPlanner:
                 terms.append("site:.gov OR city official")
             queries.append(PlannedQuery(text=" ".join(terms), data_need=need, freshness=task.freshness))
 
-        base_terms = [part for part in [entity, city, address] if part]
-        extras = ["planning commission agenda", "staff report PDF", "CEQA notice", "public comments"]
-        for extra in extras:
-            if len(queries) >= 10:
-                break
-            queries.append(PlannedQuery(text=" ".join(base_terms + [extra]), data_need=extra, freshness=task.freshness))
+        if task.domain == "real_estate":
+            base_terms = [part for part in [entity, city, address] if part]
+            extras = ["planning commission agenda", "staff report PDF", "CEQA notice", "public comments"]
+            for extra in extras:
+                if len(queries) >= 10:
+                    break
+                queries.append(PlannedQuery(text=" ".join(base_terms + [extra]), data_need=extra, freshness=task.freshness))
         return queries[:10]

@@ -21,14 +21,11 @@ class ProviderRouter:
         if "mock" in allowed:
             selected.append("mock")
 
-        if any("staff report" in need.lower() or "ceqa" in need.lower() for need in task.data_needed):
-            if "claude" in allowed:
-                selected.append("claude")
+        if "claude" in allowed:
+            selected.append("claude")
         if task.source_policy.require_raw_source_fetch and "crawler" in allowed:
             selected.append("crawler")
 
-        if not selected and "mock" in self.settings.provider_allowlist:
-            selected.append("mock")
         return _dedupe(selected)
 
 

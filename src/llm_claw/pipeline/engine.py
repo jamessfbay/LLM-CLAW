@@ -65,12 +65,24 @@ class DataAcquisitionEngine:
                     for provider_name, query in discover_jobs
                 }
                 for future in as_completed(futures):
-                    found, trace = future.result()
-                    candidates.extend(found)
-                    traces.append(trace)
+                    provider_name, query = futures[future]
+                    try:
+                        found, trace = future.result()
+                        candidates.extend(found)
+                        traces.append(trace)
+                    except Exception as exc:
+                        traces.append(
+                            ProviderTrace(
+                                provider=provider_name,
+                                status="error",
+                                query=query.text,
+                                message=f"Provider discovery failed: {type(exc).__name__}",
+                            )
+                        )
 
         candidates = _dedupe_candidates(candidates)
         candidates = self.source_filter.filter_candidates(task, candidates)
+        candidates = candidates[: task.source_policy.max_sources]
         youtube_candidates = [candidate for candidate in candidates if _is_youtube_candidate(candidate)]
         raw_sources: list[RawSource] = []
         fetch_diagnostics: list[SourceFetchDiagnostic] = []
@@ -112,6 +124,8 @@ class DataAcquisitionEngine:
             if not source:
                 continue
             verified = claim.id in verified_claim_ids
+            quote_start = source.text.find(claim.evidence_text)
+            quote_end = quote_start + len(claim.evidence_text) if quote_start >= 0 else None
             evidence.append(
                 EvidenceItem(
                     claim=claim.text,
@@ -125,6 +139,11 @@ class DataAcquisitionEngine:
                     verified_by=_source_providers(source, verified),
                     source_id=source.id,
                     claim_id=claim.id,
+                    raw_content_hash=source.content_hash,
+                    quote_start=quote_start if quote_start >= 0 else None,
+                    quote_end=quote_end,
+                    quote_match="exact" if quote_start >= 0 else "unbound",
+                    observed_at=source.retrieved_at,
                 )
             )
 

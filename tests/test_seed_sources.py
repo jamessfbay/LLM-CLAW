@@ -24,7 +24,7 @@ def test_pipeline_fetches_seed_sources_before_provider_discovery(tmp_path: Path)
         }
     )
 
-    pack = DataAcquisitionEngine(Settings(workspace=tmp_path, provider_allowlist=["crawler", "claude"])).run(task)
+    pack = DataAcquisitionEngine(Settings(workspace=tmp_path, provider_allowlist=["crawler", "claude"], source_file_roots=[fixture.parent])).run(task)
 
     assert len(pack.candidate_sources) == 1
     assert len(pack.raw_sources) == 1

@@ -5,11 +5,14 @@ from llm_claw.pipeline.source_filter import SourceRelevanceFilter
 def _task() -> AcquisitionTask:
     return AcquisitionTask.model_validate(
         {
+            "domain": "real_estate",
+            "task_type": "project_research",
             "entity": {
                 "project_name": "156 California Avenue Mixed-Use Project",
                 "city": "Palo Alto",
                 "address": "156 California Ave, Palo Alto, CA 94306",
-            }
+            },
+            "data_needed": ["planning status", "staff report", "public comments", "CEQA status"],
         }
     )
 
@@ -187,3 +190,43 @@ def test_source_filter_keeps_official_source_with_domain_task_signals() -> None:
     )
 
     assert SourceRelevanceFilter().filter_sources(task, [source]) == [source]
+
+
+def test_source_filter_keeps_commercial_candidates_by_task_terms_not_run_id() -> None:
+    task = AcquisitionTask.model_validate(
+        {
+            "domain": "commercial_discovery",
+            "entity": {"name": "run-uuid", "type": "discovery_run"},
+            "question": "warehouse ammonia refrigeration leak compliance software",
+            "data_needed": ["ammonia leak compliance pain"],
+        }
+    )
+    candidate = CandidateSource(
+        provider="openai_web_search",
+        title="Ammonia refrigeration compliance",
+        url="https://iiarcondenser.org/ammonia-refrigeration-compliance/",
+        snippet="Warehouse operators describe ammonia leak compliance reporting.",
+        is_official=False,
+    )
+
+    assert SourceRelevanceFilter().filter_candidates(task, [candidate]) == [candidate]
+
+
+def test_source_filter_rejects_unrelated_commercial_candidate() -> None:
+    task = AcquisitionTask.model_validate(
+        {
+            "domain": "commercial_discovery",
+            "entity": {"name": "run-uuid", "type": "discovery_run"},
+            "question": "warehouse ammonia refrigeration leak compliance software",
+            "data_needed": ["ammonia leak compliance pain"],
+        }
+    )
+    candidate = CandidateSource(
+        provider="gemini",
+        title="Consumer travel trends",
+        url="https://example.com/travel",
+        snippet="A report about airline vacation bookings.",
+        is_official=False,
+    )
+
+    assert SourceRelevanceFilter().filter_candidates(task, [candidate]) == []

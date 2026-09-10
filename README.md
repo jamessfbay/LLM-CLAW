@@ -1,5 +1,9 @@
 # LLM-CLAW
 
+When used with NOX, LLM-CLAW is an observer only. `observer-output/2.0` binds
+decision-grade quotations to immutable raw-source hashes and exact text spans;
+confidence and provider agreement do not grant authority.
+
 LLM-CLAW is a Source Linked Data Acquisition Agent for evidence-backed agent systems. It discovers candidate sources, fetches raw HTML/PDF/government API records, extracts evidence, and exports auditable Evidence Packs for LLM-KG.
 
 ```text

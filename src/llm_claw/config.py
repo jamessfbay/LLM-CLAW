@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from llm_claw.models import ProviderName
 
@@ -25,6 +25,15 @@ class Settings(BaseModel):
     search_api_key: str | None = None
     provider_max_workers: int = 4
     source_user_agent: str = "llm-claw/0.1"
+    source_allowed_hosts: list[str] = Field(default_factory=list)
+    source_file_roots: list[Path] = Field(default_factory=list)
+    source_max_bytes: int = Field(default=10_000_000, ge=1, le=100_000_000)
+
+    @model_validator(mode="after")
+    def default_file_root_to_workspace(self) -> "Settings":
+        if not self.source_file_roots:
+            self.source_file_roots = [self.workspace.resolve()]
+        return self
 
     @classmethod
     def from_env(cls, workspace: Path | None = None) -> "Settings":
@@ -34,6 +43,8 @@ class Settings(BaseModel):
         providers = [item.strip() for item in allowlist.split(",") if item.strip()] if allowlist else None
         cache_dir = os.getenv("LLM_CLAW_CACHE_DIR")
         require_raw = os.getenv("LLM_CLAW_REQUIRE_RAW_SOURCE_FETCH", "true").lower() not in {"0", "false", "no"}
+        allowed_hosts = [item.strip().lower() for item in os.getenv("LLM_CLAW_SOURCE_ALLOWED_HOSTS", "").split(",") if item.strip()]
+        file_roots = [Path(item).expanduser().resolve() for item in os.getenv("LLM_CLAW_SOURCE_FILE_ROOTS", "").split(os.pathsep) if item]
         return cls(
             workspace=resolved_workspace,
             provider_allowlist=providers or ["mock", "search_api", "openai_web_search", "crawler", "claude"],
@@ -52,6 +63,9 @@ class Settings(BaseModel):
                 or os.getenv("NOX_SEC_USER_AGENT")
                 or "llm-claw/0.1"
             ),
+            source_allowed_hosts=allowed_hosts,
+            source_file_roots=file_roots or [resolved_workspace.resolve()],
+            source_max_bytes=int(os.getenv("LLM_CLAW_SOURCE_MAX_BYTES", "10000000")),
         )
 
     def provider_enabled(self, provider: ProviderName) -> bool:

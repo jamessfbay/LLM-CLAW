@@ -44,3 +44,17 @@ def test_operation_receipt_is_idempotent_and_rejects_hash_conflict(tmp_path: Pat
     conflicting = command.model_copy(update={"input_hash": "different"})
     with pytest.raises(ValueError, match="different input hash"):
         store.begin(conflicting)
+
+
+def test_operation_receipt_serializes_same_idempotency_key(tmp_path: Path):
+    payload = json.loads((Path(__file__).parent / "fixtures" / "runtime_command_v1.json").read_text())
+    command = RuntimeCommand.model_validate(payload)
+    first_store = OperationReceiptStore(tmp_path, ".llm_claw")
+    second_store = OperationReceiptStore(tmp_path, ".llm_claw")
+
+    receipt = first_store.begin(command)
+    with pytest.raises(RuntimeError, match="already running"):
+        second_store.begin(command)
+
+    first_store.complete(receipt, "succeeded", {"artifact_path": "/tmp/result.json"})
+    assert second_store.begin(command).status == "succeeded"

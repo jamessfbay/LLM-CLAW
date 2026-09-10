@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 from html.parser import HTMLParser
 import os
 import re
+import socket
 import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from llm_claw.config import Settings
 from llm_claw.models import CandidateSource, RawSource, SourceFetchDiagnostic
@@ -69,9 +71,13 @@ class SourceFetcher:
 
     def _file_source(self, candidate: CandidateSource) -> tuple[RawSource | None, SourceFetchDiagnostic]:
         parsed = urlparse(candidate.url)
-        path = Path(parsed.path)
+        path = Path(parsed.path).resolve()
+        if not any(path.is_relative_to(root.resolve()) for root in self.settings.source_file_roots):
+            return None, _diagnostic(candidate, status="failed", fetch_mode="file", drop_reason="file_path_not_allowed")
         if not path.exists():
             return None, _diagnostic(candidate, status="failed", fetch_mode="file", drop_reason="file_not_found")
+        if path.stat().st_size > self.settings.source_max_bytes:
+            return None, _diagnostic(candidate, status="dropped", fetch_mode="file", drop_reason="source_too_large", bytes=path.stat().st_size)
         data = path.read_bytes()
         digest = _hash(data)
         copy_path = self.raw_dir / f"{digest}{path.suffix.lower()}"
@@ -103,6 +109,9 @@ class SourceFetcher:
         return source, _diagnostic(candidate, status="fetched", fetch_mode="file", bytes=len(data), text_length=len(text), raw_path=str(copy_path))
 
     def _http_source(self, candidate: CandidateSource) -> tuple[RawSource | None, SourceFetchDiagnostic]:
+        policy_error = _public_url_error(candidate.url, self.settings.source_allowed_hosts)
+        if policy_error:
+            return None, _diagnostic(candidate, status="failed", fetch_mode="http", drop_reason=policy_error)
         user_agent = self.settings.source_user_agent
         request = Request(candidate.url, headers={"User-Agent": user_agent})
         fetch_mode = "http"
@@ -110,8 +119,8 @@ class SourceFetcher:
         final_url: str | None = None
         error: str | None = None
         try:
-            with urlopen(request, timeout=15) as response:
-                data = response.read()
+            with _open_url(request, timeout=15) as response:
+                data = response.read(self.settings.source_max_bytes + 1)
                 content_type = response.headers.get("content-type", "")
                 http_status = getattr(response, "status", None)
                 final_url = response.geturl()
@@ -120,7 +129,7 @@ class SourceFetcher:
             fetched = _curl_fetch(candidate.url, user_agent)
             if not fetched:
                 if os.getenv("CLAW_ENABLE_BROWSER_FETCH") == "1":
-                    browser = _browser_fetch(candidate.url, user_agent)
+                    browser = _browser_fetch(candidate.url, user_agent, self.settings.source_allowed_hosts)
                     if browser:
                         data, content_type, final_url = browser
                         fetch_mode = "browser"
@@ -131,6 +140,10 @@ class SourceFetcher:
             else:
                 data, content_type = fetched
                 fetch_mode = "curl"
+        if len(data) > self.settings.source_max_bytes:
+            return None, _diagnostic(candidate, status="dropped", fetch_mode=fetch_mode, drop_reason="source_too_large", bytes=len(data))
+        if final_url and (redirect_error := _public_url_error(final_url, self.settings.source_allowed_hosts)):
+            return None, _diagnostic(candidate, status="dropped", fetch_mode=fetch_mode, final_url=final_url, drop_reason=f"redirect_{redirect_error}")
         digest, suffix, path, text = self._persist_response(candidate, data, content_type)
         drop_reason = _drop_reason(text, raw_data=data, http_status=http_status)
         if drop_reason and fetch_mode == "http":
@@ -148,7 +161,7 @@ class SourceFetcher:
                 digest, suffix, path, text = self._persist_response(candidate, data, content_type)
                 drop_reason = _drop_reason(text, raw_data=data, http_status=http_status)
         if drop_reason and fetch_mode != "browser" and os.getenv("CLAW_ENABLE_BROWSER_FETCH") == "1":
-            browser = _browser_fetch(candidate.url, user_agent)
+            browser = _browser_fetch(candidate.url, user_agent, self.settings.source_allowed_hosts)
             if browser:
                 data, content_type, final_url = browser
                 fetch_mode = "browser"
@@ -226,6 +239,32 @@ class SourceFetcher:
 
 def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _public_url_error(url: str, allowed_hosts: list[str]) -> str | None:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme not in {"http", "https"} or not host or parsed.username or parsed.password:
+        return "invalid_remote_url"
+    try:
+        port = parsed.port
+    except ValueError:
+        return "invalid_remote_url"
+    if port not in {None, 80, 443}:
+        return "port_not_allowed"
+    if allowed_hosts and host not in allowed_hosts:
+        return "host_not_allowed"
+    if host in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
+        return "private_network_not_allowed"
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo(host, port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)}
+    except OSError:
+        return None if host in allowed_hosts else "unresolved_host"
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if not ip.is_global:
+            return "private_network_not_allowed"
+    return None
 
 
 def _extract_file_text(path: Path, data: bytes) -> str:
@@ -307,7 +346,7 @@ class _ReadableHTMLParser(HTMLParser):
 def _curl_fetch(url: str, user_agent: str) -> tuple[bytes, str] | None:
     try:
         result = subprocess.run(
-            ["curl", "-L", "-sS", "-A", user_agent, url],
+            ["curl", "--max-redirs", "0", "-sS", "-A", user_agent, url],
             check=False,
             capture_output=True,
             timeout=20,
@@ -326,13 +365,19 @@ def _curl_fetch(url: str, user_agent: str) -> tuple[bytes, str] | None:
     return result.stdout, content_type
 
 
-def _browser_fetch(url: str, user_agent: str) -> tuple[bytes, str, str | None] | None:
+def _browser_fetch(url: str, user_agent: str, allowed_hosts: list[str]) -> tuple[bytes, str, str | None] | None:
     try:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page(user_agent=user_agent)
+            page.route(
+                "**/*",
+                lambda route: route.abort()
+                if _public_url_error(route.request.url, allowed_hosts)
+                else route.continue_(),
+            )
             response = page.goto(url, wait_until="networkidle", timeout=30000)
             html = page.content()
             final_url = page.url
@@ -345,7 +390,7 @@ def _browser_fetch(url: str, user_agent: str) -> tuple[bytes, str, str | None] |
 
 def _node_fetch(url: str, user_agent: str) -> tuple[bytes, str] | None:
     script = (
-        "const r=await fetch(process.argv[1],{redirect:'follow',headers:{'user-agent':process.argv[2]}});"
+        "const r=await fetch(process.argv[1],{redirect:'error',headers:{'user-agent':process.argv[2]}});"
         "if(!r.ok)process.exit(2);"
         "const b=Buffer.from(await r.arrayBuffer());process.stdout.write(b);"
     )
@@ -373,6 +418,15 @@ def _node_fetch(url: str, user_agent: str) -> tuple[bytes, str] | None:
 def _is_youtube_url(url: str) -> bool:
     host = urlparse(url).netloc.lower()
     return host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
+def _open_url(request: Request, timeout: int):
+    return build_opener(_RejectRedirects()).open(request, timeout=timeout)
 
 
 def _is_blocked_response(text: str) -> bool:
