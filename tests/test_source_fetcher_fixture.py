@@ -1,8 +1,8 @@
 from pathlib import Path
 
 from llm_claw.config import Settings
-from llm_claw.models import CandidateSource
-from llm_claw.pipeline.source_fetcher import SourceFetcher, _html_to_text
+from llm_claw.models import CandidateSource, RawSource
+from llm_claw.pipeline.source_fetcher import SourceFetcher, _html_to_text, _sec_filing_document_candidates
 from llm_claw.pipeline.extractors import _sentences
 from llm_claw.pipeline import source_fetcher
 
@@ -20,6 +20,7 @@ def test_source_fetcher_reads_local_html_fixture(tmp_path: Path) -> None:
     sources = SourceFetcher(Settings(workspace=tmp_path, source_file_roots=[fixture.parent])).fetch([candidate])
 
     assert len(sources) == 1
+    assert sources[0].id == f"src_{sources[0].content_hash[:12]}"
     assert sources[0].source_type == "local_html"
     assert "planning status is under review" in sources[0].text
     assert sources[0].raw_path
@@ -140,3 +141,32 @@ def test_source_fetcher_blocks_private_network_targets(tmp_path: Path) -> None:
 
     assert sources == []
     assert diagnostics[0].drop_reason == "private_network_not_allowed"
+
+
+def test_sec_filing_index_expands_only_primary_documents_and_exhibits(tmp_path: Path) -> None:
+    index = tmp_path / "filing-index.html"
+    index.write_text(
+        """
+        <a href="/ixviewer/doc/action?doc=/Archives/edgar/data/1378140/filing/form8-k.htm">8-K</a>
+        <a href="ex99-1.htm">EX-99.1</a>
+        <a href="filing.xml">XBRL</a>
+        <a href="https://example.test/untrusted.htm">Untrusted</a>
+        """,
+        encoding="utf-8",
+    )
+    source = RawSource(
+        source_url="https://www.sec.gov/Archives/edgar/data/1378140/filing/filing-index.htm",
+        source_title="SEC filing index",
+        source_type="official_html",
+        content_hash="hash",
+        raw_path=str(index),
+        text="SEC filing index",
+    )
+
+    candidates = _sec_filing_document_candidates(source)
+
+    assert [item.url for item in candidates] == [
+        "https://www.sec.gov/Archives/edgar/data/1378140/filing/form8-k.htm",
+        "https://www.sec.gov/Archives/edgar/data/1378140/filing/ex99-1.htm",
+    ]
+    assert all(item.provider == "crawler" and item.is_official for item in candidates)

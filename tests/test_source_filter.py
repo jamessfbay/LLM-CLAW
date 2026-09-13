@@ -1,5 +1,7 @@
 from llm_claw.models import AcquisitionTask, CandidateSource, RawSource
 from llm_claw.pipeline.source_filter import SourceRelevanceFilter
+from llm_claw.models import PlannedQuery
+from llm_claw.providers.openai_web_search import _build_prompt
 
 
 def _task() -> AcquisitionTask:
@@ -230,3 +232,70 @@ def test_source_filter_rejects_unrelated_commercial_candidate() -> None:
     )
 
     assert SourceRelevanceFilter().filter_candidates(task, [candidate]) == []
+
+
+def test_commercial_topic_anchor_rejects_generic_ai_results() -> None:
+    task = AcquisitionTask.model_validate(
+        {
+            "domain": "commercial_discovery",
+            "entity": {"name": "run-uuid", "metadata": {"topic": "AI for Education"}},
+            "question": "Find buyer pain and workflow problems in AI for Education.",
+            "data_needed": ["buyer workflow pain", "pricing alternatives"],
+        }
+    )
+    unrelated = CandidateSource(
+        provider="openai_web_search",
+        title="Terminal workflow built for AI agents",
+        url="https://news.ycombinator.com/item?id=1",
+        snippet="Developers switched from tmux to an agent terminal.",
+    )
+    relevant = CandidateSource(
+        provider="openai_web_search",
+        title="Teachers struggle to review AI-generated assignments",
+        url="https://example.com/teacher-workflow",
+        snippet="Schools report teacher workflow and classroom review pain.",
+    )
+
+    assert SourceRelevanceFilter().filter_candidates(task, [unrelated, relevant]) == [relevant]
+
+
+def test_commercial_topic_anchor_filters_fetched_source_content() -> None:
+    task = AcquisitionTask.model_validate(
+        {
+            "domain": "commercial_discovery",
+            "entity": {"name": "run-uuid", "metadata": {"topic": "AI for Education"}},
+            "question": "Find buyer pain and workflow problems in AI for Education.",
+            "data_needed": ["buyer workflow pain"],
+        }
+    )
+    unrelated = RawSource(
+        source_url="https://example.com/terminal",
+        source_title="AI agent terminal",
+        source_type="webpage",
+        content_hash="one",
+        text="Developers describe a better terminal workflow for autonomous coding agents.",
+    )
+    relevant = RawSource(
+        source_url="https://example.com/classroom",
+        source_title="Teacher AI review workload",
+        source_type="webpage",
+        content_hash="two",
+        text="Teachers and schools report a manual classroom workflow for reviewing student AI assignments.",
+    )
+
+    assert SourceRelevanceFilter().filter_sources(task, [unrelated, relevant]) == [relevant]
+
+
+def test_web_search_prompt_requires_direct_topic_evidence() -> None:
+    task = AcquisitionTask.model_validate(
+        {
+            "domain": "commercial_discovery",
+            "entity": {"name": "run-uuid", "metadata": {"topic": "AI for Education"}},
+            "question": "Find commercial pain in AI for Education.",
+            "data_needed": ["buyer workflow pain"],
+        }
+    )
+    prompt = _build_prompt(task, PlannedQuery(text='"AI for Education" buyer pain', data_need="buyer pain"))
+
+    assert "Topical scope: AI for Education" in prompt
+    assert "Reject generic AI" in prompt

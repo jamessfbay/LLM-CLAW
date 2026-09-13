@@ -8,7 +8,7 @@ import re
 import socket
 import subprocess
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from llm_claw.config import Settings
@@ -30,11 +30,20 @@ class SourceFetcher:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         sources: list[RawSource] = []
         diagnostics: list[SourceFetchDiagnostic] = []
-        for candidate in candidates:
+        pending = list(candidates)
+        queued_urls = {candidate.url.rstrip("/").lower() for candidate in pending}
+        while pending:
+            candidate = pending.pop(0)
             source, diagnostic = self._fetch_one(candidate)
             diagnostics.append(diagnostic)
             if source:
                 sources.append(source)
+                for linked in _sec_filing_document_candidates(source):
+                    key = linked.url.rstrip("/").lower()
+                    if key in queued_urls or len(queued_urls) >= 200:
+                        continue
+                    queued_urls.add(key)
+                    pending.append(linked)
         return sources, diagnostics
 
     def _fetch_one(self, candidate: CandidateSource) -> tuple[RawSource | None, SourceFetchDiagnostic]:
@@ -58,6 +67,7 @@ class SourceFetcher:
         path = self.raw_dir / f"{digest}.html"
         path.write_text(f"<html><title>{candidate.title}</title><body>{body}</body></html>", encoding="utf-8")
         return RawSource(
+            id=f"src_{digest[:12]}",
             candidate_id=candidate.id,
             source_url=candidate.url,
             source_title=candidate.title,
@@ -96,6 +106,7 @@ class SourceFetcher:
             )
         source_type = "local_pdf" if path.suffix.lower() == ".pdf" else "local_html"
         source = RawSource(
+            id=f"src_{digest[:12]}",
             candidate_id=candidate.id,
             source_url=candidate.url,
             source_title=candidate.title,
@@ -195,6 +206,7 @@ class SourceFetcher:
             else "webpage"
         )
         source = RawSource(
+            id=f"src_{digest[:12]}",
             candidate_id=candidate.id,
             source_url=candidate.url,
             source_title=candidate.title,
@@ -298,6 +310,87 @@ def _html_to_text(text: str) -> str:
     text = re.sub(r"(?s)<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def _sec_filing_document_candidates(source: RawSource) -> list[CandidateSource]:
+    parsed_index = urlparse(source.source_url)
+    if (
+        parsed_index.hostname not in {"sec.gov", "www.sec.gov"}
+        or not parsed_index.path.lower().endswith(("-index.htm", "-index.html"))
+        or "/archives/edgar/data/" not in parsed_index.path.lower()
+        or not source.raw_path
+    ):
+        return []
+    try:
+        html = Path(source.raw_path).read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+    parser = _LinkHTMLParser()
+    try:
+        parser.feed(html)
+    except Exception:
+        return []
+    filing_dir = parsed_index.path.rsplit("/", 1)[0] + "/"
+    result: list[CandidateSource] = []
+    seen: set[str] = set()
+    for href, label in parser.links:
+        url = urljoin(source.source_url, href)
+        parsed = urlparse(url)
+        if parsed.path.startswith("/ixviewer/"):
+            document = parse_qs(parsed.query).get("doc", [""])[0]
+            if document:
+                url = urljoin("https://www.sec.gov", document)
+                parsed = urlparse(url)
+        path = parsed.path.lower()
+        if (
+            parsed.hostname not in {"sec.gov", "www.sec.gov"}
+            or not path.startswith(filing_dir.lower())
+            or path == parsed_index.path.lower()
+            or path.endswith(("-index.htm", "-index.html"))
+            or not path.endswith((".htm", ".html", ".txt", ".pdf"))
+        ):
+            continue
+        key = url.rstrip("/").lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(
+            CandidateSource(
+                provider="crawler",
+                title=label or Path(parsed.path).name,
+                url=url,
+                publisher="U.S. Securities and Exchange Commission",
+                source_type="official_pdf" if path.endswith(".pdf") else "official_html",
+                confidence=0.95,
+                is_official=True,
+            )
+        )
+        if len(result) >= 25:
+            break
+    return result
+
+
+class _LinkHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[tuple[str, str]] = []
+        self._href: str | None = None
+        self._label: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "a":
+            self._href = dict(attrs).get("href")
+            self._label = []
+
+    def handle_data(self, data: str) -> None:
+        if self._href:
+            self._label.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._href:
+            self.links.append((self._href, " ".join("".join(self._label).split())))
+            self._href = None
+            self._label = []
 
 
 class _ReadableHTMLParser(HTMLParser):
