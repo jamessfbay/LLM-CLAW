@@ -68,7 +68,26 @@ def _has_commercial_task_overlap(task: AcquisitionTask, text: str) -> bool:
         for token in _tokens(" ".join([task.question or "", task.acquisition_instruction or "", *task.data_needed]))
         if token not in _COMMERCIAL_STOP_WORDS and len(token) >= 4
     }
+    topic_tokens = _commercial_topic_tokens(task)
+    if topic_tokens:
+        task_tokens.update(topic_tokens)
+        if not source_tokens & topic_tokens:
+            return False
     return len(source_tokens & task_tokens) >= 2
+
+
+def _commercial_topic_tokens(task: AcquisitionTask) -> set[str]:
+    topic = task.entity.metadata.get("topic")
+    if not isinstance(topic, str) or not topic.strip():
+        return set()
+    tokens = {
+        token for token in _tokens(topic)
+        if token not in _COMMERCIAL_STOP_WORDS and len(token) >= 4
+    }
+    expanded = set(tokens)
+    for token in tokens:
+        expanded.update(_COMMERCIAL_TOPIC_ALIASES.get(token, set()))
+    return expanded
 
 
 def _is_blocked_url(url: str) -> bool:
@@ -214,4 +233,9 @@ _COMMERCIAL_STOP_WORDS = _TASK_STOP_WORDS | {
     "software",
     "switching",
     "workaround",
+}
+
+_COMMERCIAL_TOPIC_ALIASES = {
+    "education": {"educational", "edtech", "school", "schools", "teacher", "teachers", "student", "students", "classroom", "learning"},
+    "healthcare": {"health", "clinical", "clinic", "clinics", "patient", "patients", "hospital", "hospitals", "medical"},
 }

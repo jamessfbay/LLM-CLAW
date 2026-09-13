@@ -77,6 +77,13 @@ def _build_prompt(task: AcquisitionTask, query: PlannedQuery) -> str:
     address = task.entity.address or ""
     city = task.entity.city or ""
     needs = ", ".join(task.data_needed)
+    topic = task.entity.metadata.get("topic")
+    topic_guidance = (
+        f"Topical scope: {topic}. Every returned page must contain direct evidence about this scope. "
+        "Reject generic AI, software, hiring, or market pages that only match secondary query words.\n"
+        if isinstance(topic, str) and topic.strip()
+        else ""
+    )
     source_guidance = (
         "Search the public web for direct evidence. Preserve community discussions, technical issues, public job postings, "
         "company pages, independent reporting, official documents, and counter-evidence. Never invent a URL or contact detail."
@@ -87,6 +94,7 @@ def _build_prompt(task: AcquisitionTask, query: PlannedQuery) -> str:
         "Find authoritative source URLs for a source-linked data acquisition agent.\n"
         "Return only official or high-quality candidate source pages, not a final answer.\n"
         f"{source_guidance}\n"
+        f"{topic_guidance}"
         "Return JSON only with this shape: "
         '[{"title":"...", "url":"https://...", "snippet":"...", "publisher":"...", "is_official":true}].\n'
         f"Entity: {entity}\n"
