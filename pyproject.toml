@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-claw"
-version = "0.1.0"
+version = "0.2.0"
 description = "Source linked data acquisition agent for evidence-backed LLM knowledge systems"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,6 +20,7 @@ llm = ["openai>=1.0"]
 
 [project.scripts]
 llm-claw = "llm_claw.cli:main"
+llm-claw-rpc = "llm_claw.rpc:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

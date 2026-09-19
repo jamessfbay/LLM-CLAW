@@ -49,6 +49,20 @@ llm-claw export-kg pack.json --workspace . --event-stream --runtime-context runt
 
 The commands emit NDJSON progress, artifact and terminal events. Operation receipts under `.llm_claw/operations/` make retries idempotent; reusing a key with a different input hash is rejected. Without `--event-stream`, CLI behavior is unchanged.
 
+### Persistent NOX Runtime v3.5 RPC
+
+For production integration, run one authenticated loopback service instead of
+starting a Python process for every decision:
+
+```bash
+NOX_ENGINE_RPC_TOKEN='<random-secret-at-least-32-characters>' \
+  llm-claw-rpc --host 127.0.0.1 --port 7401 --workspace /srv/nox/engines/claw
+```
+
+The service accepts only `observer/outcome`, cannot receive an authorization
+permit or model credential, and persists idempotency receipts. The v1 event
+stream remains a migration fallback.
+
 ## Environment
 
 - `LLM_CLAW_WORKSPACE`: workspace path; defaults to current directory.
