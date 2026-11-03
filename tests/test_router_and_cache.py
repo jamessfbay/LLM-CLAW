@@ -37,6 +37,20 @@ def test_provider_router_selects_gemini_when_allowed(tmp_path: Path) -> None:
     assert ProviderRouter(settings).select_providers(task) == ["gemini", "crawler"]
 
 
+def test_provider_router_selects_aisa_reddit_only_when_budget_allows(tmp_path: Path) -> None:
+    task = AcquisitionTask.model_validate({
+        "domain": "commercial_discovery",
+        "entity": {"name": "AI for Education"},
+        "data_needed": ["site:reddit.com AI for Education pain"],
+        "provider_policy": {"allowed_providers": ["aisa_reddit", "crawler"]},
+    })
+    settings = Settings(workspace=tmp_path, provider_allowlist=["aisa_reddit", "crawler"])
+
+    assert ProviderRouter(settings).select_providers(task) == ["aisa_reddit", "crawler"]
+    settings.aisa_reddit_max_queries = 0
+    assert ProviderRouter(settings).select_providers(task) == ["crawler"]
+
+
 def test_cache_key_contains_stable_task_provider_dimensions() -> None:
     task = _task()
 

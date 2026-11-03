@@ -11,6 +11,7 @@ from llm_claw.models import (
     CandidateSource,
     EvidenceItem,
     EvidencePack,
+    PlannedQuery,
     ProviderName,
     ProviderTrace,
     RawSource,
@@ -24,6 +25,7 @@ from llm_claw.planning import DataNeedPlanner, QueryPlanner
 from llm_claw.providers.claude import ClaudeVerificationAgent
 from llm_claw.providers.factory import build_provider
 from llm_claw.providers.gemini import GeminiProvider
+from llm_claw.providers.aisa_enrichment import AIsaReranker, AIsaSimilarweb
 from llm_claw.providers.router import ProviderRouter
 
 
@@ -41,20 +43,39 @@ class DataAcquisitionEngine:
         self.scorer = ConfidenceScorer()
         self.verifier = ClaudeVerificationAgent()
         self.youtube_analyzer = GeminiProvider(settings)
+        self.aisa_reranker = AIsaReranker(settings)
+        self.aisa_similarweb = AIsaSimilarweb(settings)
 
     def run(self, task: AcquisitionTask) -> EvidencePack:
         data_needs = self.data_need_planner.plan(task)
         queries = self.query_planner.plan(task, data_needs)
         selected = self.router.select_providers(task)
+        reddit_queries = [query for query in queries if "site:reddit.com" in query.text.lower()]
+        aisa_reddit_query_ids = {
+            query.id for query in reddit_queries[: self.settings.aisa_reddit_max_queries]
+        }
+        tavily_queries = [query for query in queries if not query.text.lower().startswith("site:")]
+        tavily_queries.extend(query for query in queries if query.text.lower().startswith("site:") and query not in tavily_queries)
+        aisa_tavily_query_ids = {query.id for query in tavily_queries[: self.settings.aisa_tavily_max_queries]}
+        scholar_query = PlannedQuery(
+            text=f"{task.entity.metadata.get('topic') or task.question or task.entity.display_name} empirical evidence limitations",
+            data_need="academic evidence",
+            freshness=task.freshness,
+        )
 
         candidates: list[CandidateSource] = task.seed_sources[:]
         traces: list[ProviderTrace] = []
-        discover_jobs = [
-            (provider_name, query)
-            for provider_name in selected
-            if provider_name not in {"crawler", "claude"}
-            for query in queries
-        ]
+        discover_jobs = []
+        for provider_name in selected:
+            if provider_name in {"crawler", "claude"}:
+                continue
+            provider_queries = [scholar_query] if provider_name == "aisa_scholar" else queries
+            for query in provider_queries:
+                if provider_name == "aisa_reddit" and query.id not in aisa_reddit_query_ids:
+                    continue
+                if provider_name == "aisa_tavily" and query.id not in aisa_tavily_query_ids:
+                    continue
+                discover_jobs.append((provider_name, query))
         if discover_jobs:
             with ThreadPoolExecutor(max_workers=max(1, self.settings.provider_max_workers)) as executor:
                 futures = {
@@ -82,6 +103,19 @@ class DataAcquisitionEngine:
 
         candidates = _dedupe_candidates(candidates)
         candidates = self.source_filter.filter_candidates(task, candidates)
+        if (
+            len(candidates) > task.source_policy.max_sources
+            and self.settings.aisa_api_key
+            and self.settings.aisa_rerank_max_candidates > 0
+            and "aisa_jina_rerank" in task.provider_policy.allowed_providers
+            and self.settings.provider_enabled("aisa_jina_rerank")
+        ):
+            ranked, trace = self.aisa_reranker.rank(
+                str(task.entity.metadata.get("topic") or task.question or task.entity.display_name),
+                candidates[: self.settings.aisa_rerank_max_candidates],
+            )
+            candidates = ranked + candidates[self.settings.aisa_rerank_max_candidates :]
+            traces.append(trace)
         candidates = candidates[: task.source_policy.max_sources]
         youtube_candidates = [candidate for candidate in candidates if _is_youtube_candidate(candidate)]
         raw_sources: list[RawSource] = []
@@ -90,7 +124,9 @@ class DataAcquisitionEngine:
             fetch_candidates = [candidate for candidate in candidates if not _is_youtube_candidate(candidate)]
             fetch_start = time.perf_counter()
             if hasattr(self.fetcher, "fetch_with_diagnostics"):
-                raw_sources, fetch_diagnostics = self.fetcher.fetch_with_diagnostics(fetch_candidates)
+                raw_sources, fetch_diagnostics = self.fetcher.fetch_with_diagnostics(
+                    fetch_candidates, allowed_providers=set(task.provider_policy.allowed_providers)
+                )
             else:
                 raw_sources = self.fetcher.fetch(fetch_candidates)
             traces.append(
@@ -148,6 +184,22 @@ class DataAcquisitionEngine:
             )
 
         structured = self.normalizer.normalize(task, claims)
+        if (
+            task.task_type == "commercial_deep_research"
+            and self.settings.aisa_api_key
+            and self.settings.aisa_similarweb_max_domains > 0
+            and "aisa_similarweb" in task.provider_policy.allowed_providers
+            and self.settings.provider_enabled("aisa_similarweb")
+        ):
+            domains = task.entity.metadata.get("competitor_domains")
+            if isinstance(domains, list):
+                snapshots, market_traces = self.aisa_similarweb.traffic(
+                    [domain for domain in domains if isinstance(domain, str)],
+                    self.settings.aisa_similarweb_max_domains,
+                )
+                if snapshots:
+                    structured["market_metrics"] = snapshots
+                traces.extend(market_traces)
         missing = _missing_data(task, evidence, raw_sources, fetch_diagnostics)
         return EvidencePack(
             request_id=task.id,

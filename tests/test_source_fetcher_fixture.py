@@ -1,4 +1,6 @@
 from pathlib import Path
+from threading import Lock
+import time
 
 from llm_claw.config import Settings
 from llm_claw.models import CandidateSource, RawSource
@@ -44,6 +46,35 @@ def test_source_fetcher_records_diagnostics_for_local_html(tmp_path: Path) -> No
     assert diagnostics[0].candidate_id == candidate.id
     assert diagnostics[0].raw_path
     assert diagnostics[0].text_length > 0
+
+
+def test_source_fetcher_fetches_candidates_concurrently_and_preserves_order(tmp_path: Path, monkeypatch) -> None:
+    fetcher = SourceFetcher(Settings(workspace=tmp_path, provider_max_workers=4))
+    candidates = [CandidateSource(provider="crawler", title=f"Source {index}", url=f"mock://source-{index}") for index in range(4)]
+    active = 0
+    peak = 0
+    lock = Lock()
+    original = fetcher._fetch_one
+
+    def delayed(candidate, allowed_providers):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.03)
+        try:
+            return original(candidate, allowed_providers)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(fetcher, "_fetch_one", delayed)
+
+    sources, diagnostics = fetcher.fetch_with_diagnostics(candidates)
+
+    assert peak > 1
+    assert [item.candidate_id for item in diagnostics] == [item.id for item in candidates]
+    assert [item.candidate_id for item in sources] == [item.id for item in candidates]
 
 
 def test_source_fetcher_records_drop_reason_for_empty_source(tmp_path: Path) -> None:

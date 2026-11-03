@@ -23,6 +23,15 @@ class Settings(BaseModel):
     openai_model: str = "gpt-4.1-mini"
     gemini_model: str = "gemini-3.5-flash"
     search_api_key: str | None = None
+    aisa_api_key: str | None = None
+    aisa_request_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    aisa_reddit_max_queries: int = Field(default=2, ge=0, le=10)
+    aisa_tavily_max_queries: int = Field(default=2, ge=0, le=10)
+    aisa_scholar_max_queries: int = Field(default=1, ge=0, le=5)
+    aisa_extract_max_fallbacks: int = Field(default=3, ge=0, le=20)
+    aisa_reddit_comments_max_fallbacks: int = Field(default=1, ge=0, le=5)
+    aisa_rerank_max_candidates: int = Field(default=40, ge=0, le=100)
+    aisa_similarweb_max_domains: int = Field(default=1, ge=0, le=5)
     provider_max_workers: int = 4
     source_user_agent: str = "llm-claw/0.1"
     source_allowed_hosts: list[str] = Field(default_factory=list)
@@ -57,6 +66,15 @@ class Settings(BaseModel):
             openai_model=os.getenv("LLM_CLAW_OPENAI_MODEL", "gpt-4.1-mini"),
             gemini_model=os.getenv("LLM_CLAW_GEMINI_MODEL", "gemini-3.5-flash"),
             search_api_key=os.getenv("SEARCH_API_KEY"),
+            aisa_api_key=os.getenv("AISA_API_KEY"),
+            aisa_request_timeout_seconds=int(os.getenv("AISA_REQUEST_TIMEOUT_SECONDS", "30")),
+            aisa_reddit_max_queries=int(os.getenv("LLM_CLAW_AISA_REDDIT_MAX_QUERIES", "2")),
+            aisa_tavily_max_queries=int(os.getenv("LLM_CLAW_AISA_TAVILY_MAX_QUERIES", "2")),
+            aisa_scholar_max_queries=int(os.getenv("LLM_CLAW_AISA_SCHOLAR_MAX_QUERIES", "1")),
+            aisa_extract_max_fallbacks=int(os.getenv("LLM_CLAW_AISA_EXTRACT_MAX_FALLBACKS", "3")),
+            aisa_reddit_comments_max_fallbacks=int(os.getenv("LLM_CLAW_AISA_REDDIT_COMMENTS_MAX_FALLBACKS", "1")),
+            aisa_rerank_max_candidates=int(os.getenv("LLM_CLAW_AISA_RERANK_MAX_CANDIDATES", "40")),
+            aisa_similarweb_max_domains=int(os.getenv("LLM_CLAW_AISA_SIMILARWEB_MAX_DOMAINS", "1")),
             provider_max_workers=int(os.getenv("LLM_CLAW_PROVIDER_MAX_WORKERS", "4")),
             source_user_agent=(
                 os.getenv("CLAW_SOURCE_USER_AGENT")

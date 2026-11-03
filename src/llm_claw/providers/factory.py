@@ -7,6 +7,9 @@ from llm_claw.providers.gemini import GeminiProvider
 from llm_claw.providers.mock import MockProvider
 from llm_claw.providers.openai_web_search import OpenAIWebSearchProvider
 from llm_claw.providers.search_api import SearchAPIProvider
+from llm_claw.providers.aisa_reddit import AIsaRedditProvider
+from llm_claw.providers.aisa_tavily import AIsaTavilyProvider
+from llm_claw.providers.aisa_scholar import AIsaScholarProvider
 
 
 def build_provider(name: ProviderName, settings: Settings):
@@ -14,6 +17,12 @@ def build_provider(name: ProviderName, settings: Settings):
         return MockProvider()
     if name == "search_api":
         return SearchAPIProvider(settings)
+    if name == "aisa_reddit":
+        return AIsaRedditProvider(settings)
+    if name == "aisa_tavily":
+        return AIsaTavilyProvider(settings)
+    if name == "aisa_scholar":
+        return AIsaScholarProvider(settings)
     if name == "gemini":
         return GeminiProvider(settings)
     if name == "claude":
@@ -33,6 +42,11 @@ def list_provider_statuses(settings: Settings) -> list[dict[str, str | bool]]:
     providers: list[ProviderName] = [
         "mock",
         "search_api",
+        "aisa_reddit",
+        "aisa_tavily",
+        "aisa_scholar",
+        "aisa_jina_rerank",
+        "aisa_similarweb",
         "crawler",
         "claude",
         "gemini",
@@ -46,6 +60,11 @@ def list_provider_statuses(settings: Settings) -> list[dict[str, str | bool]]:
         configured = {
             "mock": True,
             "search_api": bool(settings.search_api_key),
+            "aisa_reddit": bool(settings.aisa_api_key),
+            "aisa_tavily": bool(settings.aisa_api_key),
+            "aisa_scholar": bool(settings.aisa_api_key),
+            "aisa_jina_rerank": bool(settings.aisa_api_key),
+            "aisa_similarweb": bool(settings.aisa_api_key),
             "crawler": True,
             "claude": bool(settings.anthropic_api_key),
             "gemini": bool(settings.gemini_api_key),

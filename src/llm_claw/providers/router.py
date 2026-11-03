@@ -16,6 +16,12 @@ class ProviderRouter:
             selected.append("search_api")
         if "openai_web_search" in allowed:
             selected.append("openai_web_search")
+        if "aisa_reddit" in allowed and self.settings.aisa_reddit_max_queries > 0:
+            selected.append("aisa_reddit")
+        if "aisa_tavily" in allowed and self.settings.aisa_tavily_max_queries > 0:
+            selected.append("aisa_tavily")
+        if "aisa_scholar" in allowed and self.settings.aisa_scholar_max_queries > 0 and task.task_type == "commercial_deep_research":
+            selected.append("aisa_scholar")
         if "gemini" in allowed:
             selected.append("gemini")
         if "mock" in allowed:

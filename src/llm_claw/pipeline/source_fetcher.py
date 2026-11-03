@@ -3,29 +3,37 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 from html.parser import HTMLParser
+from html import escape
 import os
 import re
 import socket
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Lock
 from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from llm_claw.config import Settings
-from llm_claw.models import CandidateSource, RawSource, SourceFetchDiagnostic
+from llm_claw.models import CandidateSource, ProviderName, RawSource, SourceFetchDiagnostic
+from llm_claw.providers.aisa_client import AIsaClient
 
 
 class SourceFetcher:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.raw_dir = settings.workspace / ".llm_claw" / "raw_sources"
+        self.aisa = AIsaClient(settings)
+        self.aisa_extract_attempts = 0
+        self.aisa_reddit_comment_attempts = 0
+        self._fallback_lock = Lock()
 
     def fetch(self, candidates: list[CandidateSource]) -> list[RawSource]:
         sources, _diagnostics = self.fetch_with_diagnostics(candidates)
         return sources
 
     def fetch_with_diagnostics(
-        self, candidates: list[CandidateSource]
+        self, candidates: list[CandidateSource], *, allowed_providers: set[ProviderName] | None = None
     ) -> tuple[list[RawSource], list[SourceFetchDiagnostic]]:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         sources: list[RawSource] = []
@@ -33,27 +41,30 @@ class SourceFetcher:
         pending = list(candidates)
         queued_urls = {candidate.url.rstrip("/").lower() for candidate in pending}
         while pending:
-            candidate = pending.pop(0)
-            source, diagnostic = self._fetch_one(candidate)
-            diagnostics.append(diagnostic)
-            if source:
-                sources.append(source)
-                for linked in _sec_filing_document_candidates(source):
-                    key = linked.url.rstrip("/").lower()
-                    if key in queued_urls or len(queued_urls) >= 200:
-                        continue
-                    queued_urls.add(key)
-                    pending.append(linked)
+            batch = pending
+            pending = []
+            with ThreadPoolExecutor(max_workers=min(max(1, self.settings.provider_max_workers), len(batch))) as executor:
+                results = list(executor.map(lambda candidate: self._fetch_one(candidate, allowed_providers or set()), batch))
+            for candidate, (source, diagnostic) in zip(batch, results, strict=True):
+                diagnostics.append(diagnostic)
+                if source:
+                    sources.append(source)
+                    for linked in _sec_filing_document_candidates(source):
+                        key = linked.url.rstrip("/").lower()
+                        if key in queued_urls or len(queued_urls) >= 200:
+                            continue
+                        queued_urls.add(key)
+                        pending.append(linked)
         return sources, diagnostics
 
-    def _fetch_one(self, candidate: CandidateSource) -> tuple[RawSource | None, SourceFetchDiagnostic]:
+    def _fetch_one(self, candidate: CandidateSource, allowed_providers: set[ProviderName]) -> tuple[RawSource | None, SourceFetchDiagnostic]:
         if candidate.url.startswith("mock://"):
             source = self._mock_source(candidate)
             return source, _diagnostic(candidate, status="fetched", fetch_mode="mock", raw_path=source.raw_path, text_length=len(source.text), bytes=len(source.text.encode("utf-8")))
         if candidate.url.startswith("file://"):
             return self._file_source(candidate)
         if candidate.url.startswith("http://") or candidate.url.startswith("https://"):
-            return self._http_source(candidate)
+            return self._http_source(candidate, allowed_providers)
         return None, _diagnostic(candidate, status="failed", drop_reason="unsupported_url_scheme")
 
     def _mock_source(self, candidate: CandidateSource) -> RawSource:
@@ -119,7 +130,7 @@ class SourceFetcher:
         )
         return source, _diagnostic(candidate, status="fetched", fetch_mode="file", bytes=len(data), text_length=len(text), raw_path=str(copy_path))
 
-    def _http_source(self, candidate: CandidateSource) -> tuple[RawSource | None, SourceFetchDiagnostic]:
+    def _http_source(self, candidate: CandidateSource, allowed_providers: set[ProviderName]) -> tuple[RawSource | None, SourceFetchDiagnostic]:
         policy_error = _public_url_error(candidate.url, self.settings.source_allowed_hosts)
         if policy_error:
             return None, _diagnostic(candidate, status="failed", fetch_mode="http", drop_reason=policy_error)
@@ -145,9 +156,15 @@ class SourceFetcher:
                         data, content_type, final_url = browser
                         fetch_mode = "browser"
                     else:
-                        return None, _diagnostic(candidate, status="failed", fetch_mode="http", drop_reason="fetch_failed", error=error)
+                        fallback = self._aisa_fallback(candidate, allowed_providers)
+                        if not fallback:
+                            return None, _diagnostic(candidate, status="failed", fetch_mode="http", drop_reason="fetch_failed", error=error)
+                        data, content_type, fetch_mode = fallback
                 else:
-                    return None, _diagnostic(candidate, status="failed", fetch_mode="http", drop_reason="fetch_failed", error=error)
+                    fallback = self._aisa_fallback(candidate, allowed_providers)
+                    if not fallback:
+                        return None, _diagnostic(candidate, status="failed", fetch_mode="http", drop_reason="fetch_failed", error=error)
+                    data, content_type, fetch_mode = fallback
             else:
                 data, content_type = fetched
                 fetch_mode = "curl"
@@ -178,6 +195,14 @@ class SourceFetcher:
                 fetch_mode = "browser"
                 digest, suffix, path, text = self._persist_response(candidate, data, content_type)
                 drop_reason = _drop_reason(text, raw_data=data, http_status=http_status)
+        if drop_reason and fetch_mode not in {"aisa_tavily_extract", "aisa_reddit_comments"}:
+            fallback = self._aisa_fallback(candidate, allowed_providers)
+            if fallback:
+                data, content_type, fetch_mode = fallback
+                http_status = None
+                final_url = candidate.url
+                digest, suffix, path, text = self._persist_response(candidate, data, content_type)
+                drop_reason = _drop_reason(text, raw_data=data)
         if drop_reason:
             return None, _diagnostic(
                 candidate,
@@ -229,6 +254,59 @@ class SourceFetcher:
             raw_path=str(path),
             error=error,
         )
+
+    def _aisa_fallback(self, candidate: CandidateSource, allowed_providers: set[ProviderName]) -> tuple[bytes, str, str] | None:
+        if not self.settings.aisa_api_key:
+            return None
+        if "aisa_tavily" in allowed_providers and self.settings.provider_enabled("aisa_tavily") and self._reserve_fallback("extract"):
+            try:
+                payload = self.aisa.post("/apis/v1/tavily/extract", {"urls": [candidate.url], "extract_depth": "basic"})
+                results = payload.get("results")
+                if isinstance(results, list):
+                    for result in results:
+                        if not isinstance(result, dict) or result.get("url", "").rstrip("/") != candidate.url.rstrip("/"):
+                            continue
+                        content = str(result.get("raw_content") or "").strip()
+                        if len(content) >= 40:
+                            return content[: self.settings.source_max_bytes].encode("utf-8"), "text/plain", "aisa_tavily_extract"
+            except Exception:
+                pass
+        if (
+            "aisa_reddit" in allowed_providers
+            and self.settings.provider_enabled("aisa_reddit")
+            and urlparse(candidate.url).hostname in {"reddit.com", "www.reddit.com", "old.reddit.com"}
+            and self._reserve_fallback("reddit")
+        ):
+            try:
+                payload = self.aisa.get("/apis/v1/reddit/post/comments", {"url": candidate.url})
+                post = payload.get("post") if isinstance(payload.get("post"), dict) else {}
+                returned_url = str(post.get("url") or post.get("permalink") or "")
+                if returned_url:
+                    returned_url = urljoin("https://www.reddit.com", returned_url)
+                    if urlparse(returned_url).path.rstrip("/") != urlparse(candidate.url).path.rstrip("/"):
+                        return None
+                comments = payload.get("comments") if isinstance(payload.get("comments"), list) else []
+                pieces = [str(post.get("title") or ""), str(post.get("selftext") or "")]
+                pieces.extend(str(item.get("body") or "") for item in comments[:10] if isinstance(item, dict))
+                content = "\n\n".join(piece.strip() for piece in pieces if piece.strip())
+                if len(content) >= 40:
+                    html = "<html><body>" + "".join(f"<p>{escape(piece)}</p>" for piece in pieces if piece.strip()) + "</body></html>"
+                    return html.encode("utf-8")[: self.settings.source_max_bytes], "text/html", "aisa_reddit_comments"
+            except Exception:
+                pass
+        return None
+
+    def _reserve_fallback(self, fallback_type: str) -> bool:
+        with self._fallback_lock:
+            if fallback_type == "extract":
+                if self.aisa_extract_attempts >= self.settings.aisa_extract_max_fallbacks:
+                    return False
+                self.aisa_extract_attempts += 1
+                return True
+            if self.aisa_reddit_comment_attempts >= self.settings.aisa_reddit_comments_max_fallbacks:
+                return False
+            self.aisa_reddit_comment_attempts += 1
+            return True
 
     def _persist_response(
         self,
@@ -550,6 +628,8 @@ def _drop_reason(text: str, *, raw_data: bytes | None = None, http_status: int |
         return "empty_text"
     if _is_blocked_response(text):
         return "blocked_response"
+    if len(text.strip()) < 40:
+        return "insufficient_text"
     return None
 
 

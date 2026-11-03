@@ -25,3 +25,7 @@ def test_faa_404_template_is_classified_from_raw_html() -> None:
     raw = b'<html data-headerstatus="404"><title>Federal Aviation Administration</title></html>'
 
     assert _drop_reason("Federal Aviation Administration", raw_data=raw) == "http_404"
+
+
+def test_placeholder_page_is_not_accepted_as_a_raw_source() -> None:
+    assert _drop_reason("Reddit") == "insufficient_text"
