@@ -63,6 +63,18 @@ def test_cache_key_contains_stable_task_provider_dimensions() -> None:
     assert first != different_provider
 
 
+def test_cache_key_changes_when_provider_model_changes(monkeypatch) -> None:
+    task = _task()
+    task.provider_policy.allowed_providers = ["openai_web_search"]
+
+    monkeypatch.setenv("LLM_CLAW_OPENAI_MODEL", "gpt-5.4-mini")
+    first = build_cache_key(task, "Example query", "openai_web_search", "latest")
+    monkeypatch.setenv("LLM_CLAW_OPENAI_MODEL", "gpt-5.6-sol")
+    second = build_cache_key(task, "Example query", "openai_web_search", "latest")
+
+    assert first != second
+
+
 def test_commercial_discovery_preserves_targeted_queries_without_real_estate_terms() -> None:
     task = AcquisitionTask.model_validate(
         {
