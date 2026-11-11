@@ -258,6 +258,12 @@ def _provider_queries(
     text = lambda query: query.text.lower()
     if provider == "aisa_reddit":
         return [query for query in queries if "site:reddit.com" in text(query)][: settings.aisa_reddit_max_queries]
+    if provider == "aisa_twitter":
+        return [query for query in queries if "site:x.com" in text(query)][: settings.aisa_twitter_max_queries]
+    if provider == "aisa_apollo_people":
+        return [
+            query for query in queries if "site:linkedin.com/in" in text(query)
+        ][: settings.aisa_apollo_people_max_queries]
     if provider == "github":
         return [query for query in queries if "site:github.com" in text(query)][: settings.github_max_queries]
     if provider == "hacker_news":
@@ -316,6 +322,9 @@ def _has_useful_youtube_analysis(text: str) -> bool:
 
 def _source_providers(source: RawSource, verified: bool) -> list[ProviderName]:
     providers: list[ProviderName] = []
+    source_provider = source.metadata.get("source_provider")
+    if source_provider in {"aisa_twitter", "aisa_apollo_people"}:
+        providers.append(source_provider)
     if source.raw_path:
         providers.append("crawler")
     if source.metadata.get("source_fetcher") == "gemini" or source.metadata.get("analysis_provider") == "gemini":

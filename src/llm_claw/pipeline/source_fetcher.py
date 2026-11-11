@@ -134,6 +134,10 @@ class SourceFetcher:
         policy_error = _public_url_error(candidate.url, self.settings.source_allowed_hosts)
         if policy_error:
             return None, _diagnostic(candidate, status="failed", fetch_mode="http", drop_reason=policy_error)
+        if candidate.provider in {"aisa_twitter", "aisa_apollo_people"}:
+            snapshot = self._aisa_api_snapshot(candidate, allowed_providers)
+            if snapshot:
+                return snapshot
         user_agent = self.settings.source_user_agent
         request = Request(candidate.url, headers={"User-Agent": user_agent})
         fetch_mode = "http"
@@ -255,9 +259,58 @@ class SourceFetcher:
             error=error,
         )
 
+    def _aisa_api_snapshot(
+        self, candidate: CandidateSource, allowed_providers: set[ProviderName]
+    ) -> tuple[RawSource, SourceFetchDiagnostic] | None:
+        fallback = self._aisa_fallback(candidate, allowed_providers)
+        if not fallback:
+            return None
+        data, content_type, fetch_mode = fallback
+        digest, _suffix, path, text = self._persist_response(candidate, data, content_type)
+        source = RawSource(
+            id=f"src_{digest[:12]}",
+            candidate_id=candidate.id,
+            source_url=candidate.url,
+            source_title=candidate.title,
+            publisher=candidate.publisher,
+            source_type="webpage",
+            content_hash=digest,
+            raw_path=str(path),
+            text=text,
+            metadata={
+                **candidate.metadata,
+                "content_type": content_type,
+                "fetch_mode": fetch_mode,
+                "final_url": candidate.url,
+            },
+        )
+        return source, _diagnostic(
+            candidate,
+            status="fetched",
+            fetch_mode=fetch_mode,
+            final_url=candidate.url,
+            content_type=content_type,
+            bytes=len(data),
+            text_length=len(text),
+            raw_path=str(path),
+        )
+
     def _aisa_fallback(self, candidate: CandidateSource, allowed_providers: set[ProviderName]) -> tuple[bytes, str, str] | None:
         if not self.settings.aisa_api_key:
             return None
+        if (
+            candidate.provider in {"aisa_twitter", "aisa_apollo_people"}
+            and candidate.provider in allowed_providers
+            and self.settings.provider_enabled(candidate.provider)
+        ):
+            pieces = [candidate.title, candidate.snippet]
+            for key in ("person_name", "public_handle", "target_role", "organization_name", "published_at"):
+                value = str(candidate.metadata.get(key) or "").strip()
+                if value:
+                    pieces.append(f"{key.replace('_', ' ').title()}: {value}")
+            pieces.append(f"Original public source: {candidate.url}")
+            html = "<html><body>" + "".join(f"<p>{escape(piece)}</p>" for piece in pieces if piece) + "</body></html>"
+            return html.encode("utf-8")[: self.settings.source_max_bytes], "text/html", f"{candidate.provider}_api"
         if "aisa_tavily" in allowed_providers and self.settings.provider_enabled("aisa_tavily") and self._reserve_fallback("extract"):
             try:
                 payload = self.aisa.post("/apis/v1/tavily/extract", {"urls": [candidate.url], "extract_depth": "basic"})

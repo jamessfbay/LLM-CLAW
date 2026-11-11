@@ -8,6 +8,8 @@ from llm_claw.providers.mock import MockProvider
 from llm_claw.providers.openai_web_search import OpenAIWebSearchProvider
 from llm_claw.providers.search_api import SearchAPIProvider
 from llm_claw.providers.aisa_reddit import AIsaRedditProvider
+from llm_claw.providers.aisa_twitter import AIsaTwitterProvider
+from llm_claw.providers.aisa_apollo_people import AIsaApolloPeopleProvider
 from llm_claw.providers.aisa_tavily import AIsaTavilyProvider
 from llm_claw.providers.aisa_scholar import AIsaScholarProvider
 from llm_claw.providers.github import GitHubProvider
@@ -22,6 +24,10 @@ def build_provider(name: ProviderName, settings: Settings):
         return SearchAPIProvider(settings)
     if name == "aisa_reddit":
         return AIsaRedditProvider(settings)
+    if name == "aisa_twitter":
+        return AIsaTwitterProvider(settings)
+    if name == "aisa_apollo_people":
+        return AIsaApolloPeopleProvider(settings)
     if name == "aisa_tavily":
         return AIsaTavilyProvider(settings)
     if name == "aisa_scholar":
@@ -52,6 +58,8 @@ def list_provider_statuses(settings: Settings) -> list[dict[str, str | bool]]:
         "mock",
         "search_api",
         "aisa_reddit",
+        "aisa_twitter",
+        "aisa_apollo_people",
         "aisa_tavily",
         "aisa_scholar",
         "aisa_jina_rerank",
@@ -73,6 +81,8 @@ def list_provider_statuses(settings: Settings) -> list[dict[str, str | bool]]:
             "mock": True,
             "search_api": bool(settings.search_api_key),
             "aisa_reddit": bool(settings.aisa_api_key),
+            "aisa_twitter": bool(settings.aisa_api_key),
+            "aisa_apollo_people": bool(settings.aisa_api_key),
             "aisa_tavily": bool(settings.aisa_api_key),
             "aisa_scholar": bool(settings.aisa_api_key),
             "aisa_jina_rerank": bool(settings.aisa_api_key),

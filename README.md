@@ -71,8 +71,8 @@ stream remains a migration fallback.
 - `LLM_CLAW_CACHE_DIR`: defaults to `.llm_claw/cache`.
 - `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`, `OPENAI_API_KEY`, `SEARCH_API_KEY`: enable optional providers.
 - `github`, `hacker_news`, and `stack_exchange` discover public pain authors for candidate-buyer research. `GITHUB_TOKEN` raises GitHub API limits; the providers preserve only public handles, profiles, source URLs, and timestamps, and every source still requires raw fetch and evidence extraction.
-- `AISA_API_KEY`: enables selected AIsa-backed sources and enrichments when each task also allows the provider. `aisa_tavily` and `aisa_reddit` discover candidate URLs; `aisa_scholar` is reserved for deep research; `aisa_jina_rerank` only reorders candidates; `aisa_similarweb` adds a traffic estimate for an explicit competitor domain. None of these makes an unfetched URL verified evidence.
-- `LLM_CLAW_AISA_*` bounds queries, fallback extracts, Reddit comment fetches, rerank candidates, and Similarweb domains. See `.env.example` for defaults.
+- `AISA_API_KEY`: enables selected AIsa-backed sources and enrichments when each task also allows the provider. `aisa_reddit` and `aisa_twitter` find public pain authors; `aisa_apollo_people` finds named economic buyers with public LinkedIn profile URLs; `aisa_tavily` discovers or fetches public pages; `aisa_scholar` is reserved for deep research; `aisa_jina_rerank` only reorders candidates; `aisa_similarweb` adds a traffic estimate for an explicit competitor domain. X and Apollo results retain their provider, original URL, request trace and retrieval time, but do not prove purchase intent.
+- `LLM_CLAW_AISA_*` bounds queries, fallback extracts, Reddit comment fetches, rerank candidates, and Similarweb domains. Apollo searches are followed by at most `LLM_CLAW_AISA_APOLLO_PEOPLE_MAX_ENRICHMENTS` public-profile matches per query. Personal email, phone, and waterfall enrichment remain disabled. See `.env.example` for defaults.
 
 Copy `.env.example` to `.env` for local use. Do not commit `.env`; it is ignored because it contains API keys.
 

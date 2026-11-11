@@ -27,7 +27,7 @@ class AIsaClient:
             raise ValueError("AISA_API_KEY is not configured")
         if not path.startswith("/") or path.startswith("//"):
             raise ValueError("AIsa API path must be absolute and local to the configured origin")
-        query = f"?{urlencode(params)}" if params else ""
+        query = f"?{urlencode(params, doseq=True)}" if params else ""
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         request = Request(
             f"{self.base_url}{path}{query}",

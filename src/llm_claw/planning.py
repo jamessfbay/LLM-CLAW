@@ -58,6 +58,8 @@ def _candidate_buyer_queries(task: AcquisitionTask) -> list[PlannedQuery]:
         (f"site:reddit.com {exact} problem workaround", "Reddit pain authors"),
         (f"site:reddit.com {exact} looking for tool alternative", "Reddit solution seekers"),
         (f"site:reddit.com {broad} manual workflow cost", "Reddit concrete workflow"),
+        (f"site:x.com {exact} problem workaround looking for tool", "X pain authors and solution seekers"),
+        (f"site:x.com {broad} manual workflow cost alternative", "X concrete workflow authors"),
         (f"site:github.com/issues {exact} problem workaround", "GitHub issue authors"),
         (f"site:github.com/issues {broad} security approval audit", "GitHub governance issue authors"),
         (f"site:github.com/issues {exact} looking for alternative", "GitHub solution seekers"),
@@ -67,6 +69,8 @@ def _candidate_buyer_queries(task: AcquisitionTask) -> list[PlannedQuery]:
         (f"site:stackoverflow.com {exact} problem workaround", "Stack Overflow question authors"),
         (f"site:stackoverflow.com {broad} security permission", "Stack Overflow governance questions"),
         (f"site:stackoverflow.com {exact} tool alternative", "Stack Overflow solution seekers"),
+        (f"site:linkedin.com/in {broad} founder owner director head", "named professional economic buyers"),
+        (f"site:linkedin.com/in {exact} platform engineering security governance", "LinkedIn economic buyers"),
     ]
     return [PlannedQuery(text=text, data_need=need, freshness=task.freshness) for text, need in query_specs]
 

@@ -25,6 +25,14 @@ class SourceRelevanceFilter:
         if _is_official_youtube_channel(candidate.url):
             return True
 
+        if task.task_type == "candidate_buyer_discovery" and candidate.provider in {
+            "aisa_twitter", "aisa_apollo_people",
+        }:
+            metadata = candidate.metadata
+            has_public_identity = bool(metadata.get("public_handle") or metadata.get("person_name"))
+            has_traceable_profile = bool(metadata.get("profile_url") and metadata.get("source_provider"))
+            return has_public_identity and has_traceable_profile
+
         if task.domain == "commercial_discovery":
             return _has_commercial_task_overlap(task, " ".join(
                 part

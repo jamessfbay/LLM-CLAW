@@ -30,6 +30,9 @@ class Settings(BaseModel):
     aisa_api_key: str | None = None
     aisa_request_timeout_seconds: int = Field(default=30, ge=1, le=120)
     aisa_reddit_max_queries: int = Field(default=2, ge=0, le=10)
+    aisa_twitter_max_queries: int = Field(default=2, ge=0, le=10)
+    aisa_apollo_people_max_queries: int = Field(default=2, ge=0, le=10)
+    aisa_apollo_people_max_enrichments: int = Field(default=5, ge=0, le=20)
     aisa_tavily_max_queries: int = Field(default=2, ge=0, le=10)
     aisa_scholar_max_queries: int = Field(default=1, ge=0, le=5)
     aisa_extract_max_fallbacks: int = Field(default=3, ge=0, le=20)
@@ -77,6 +80,11 @@ class Settings(BaseModel):
             aisa_api_key=os.getenv("AISA_API_KEY"),
             aisa_request_timeout_seconds=int(os.getenv("AISA_REQUEST_TIMEOUT_SECONDS", "30")),
             aisa_reddit_max_queries=int(os.getenv("LLM_CLAW_AISA_REDDIT_MAX_QUERIES", "2")),
+            aisa_twitter_max_queries=int(os.getenv("LLM_CLAW_AISA_TWITTER_MAX_QUERIES", "2")),
+            aisa_apollo_people_max_queries=int(os.getenv("LLM_CLAW_AISA_APOLLO_PEOPLE_MAX_QUERIES", "2")),
+            aisa_apollo_people_max_enrichments=int(
+                os.getenv("LLM_CLAW_AISA_APOLLO_PEOPLE_MAX_ENRICHMENTS", "5")
+            ),
             aisa_tavily_max_queries=int(os.getenv("LLM_CLAW_AISA_TAVILY_MAX_QUERIES", "2")),
             aisa_scholar_max_queries=int(os.getenv("LLM_CLAW_AISA_SCHOLAR_MAX_QUERIES", "1")),
             aisa_extract_max_fallbacks=int(os.getenv("LLM_CLAW_AISA_EXTRACT_MAX_FALLBACKS", "3")),

@@ -23,6 +23,8 @@ ProviderName = Literal[
     "perplexity",
     "openai_web_search",
     "aisa_reddit",
+    "aisa_twitter",
+    "aisa_apollo_people",
     "aisa_tavily",
     "aisa_scholar",
     "aisa_jina_rerank",

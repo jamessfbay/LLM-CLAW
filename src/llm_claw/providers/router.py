@@ -18,6 +18,18 @@ class ProviderRouter:
             selected.append("openai_web_search")
         if "aisa_reddit" in allowed and self.settings.aisa_reddit_max_queries > 0:
             selected.append("aisa_reddit")
+        if (
+            task.task_type == "candidate_buyer_discovery"
+            and "aisa_twitter" in allowed
+            and self.settings.aisa_twitter_max_queries > 0
+        ):
+            selected.append("aisa_twitter")
+        if (
+            task.task_type == "candidate_buyer_discovery"
+            and "aisa_apollo_people" in allowed
+            and self.settings.aisa_apollo_people_max_queries > 0
+        ):
+            selected.append("aisa_apollo_people")
         if "aisa_tavily" in allowed and self.settings.aisa_tavily_max_queries > 0:
             selected.append("aisa_tavily")
         if "aisa_scholar" in allowed and self.settings.aisa_scholar_max_queries > 0 and task.task_type == "commercial_deep_research":
