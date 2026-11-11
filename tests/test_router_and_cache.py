@@ -90,3 +90,29 @@ def test_commercial_discovery_preserves_targeted_queries_without_real_estate_ter
 
     assert [query.text for query in queries] == task.data_needed
     assert all("CEQA" not in query.text and "planning commission" not in query.text for query in queries)
+
+
+def test_candidate_buyer_planner_creates_identity_aware_platform_queries() -> None:
+    task = AcquisitionTask.model_validate({
+        "domain": "commercial_discovery",
+        "task_type": "candidate_buyer_discovery",
+        "entity": {"name": "candidate search", "metadata": {"topic": "Coding agent governance"}},
+        "data_needed": ["recent public pain statements"],
+        "provider_policy": {
+            "allowed_providers": ["aisa_reddit", "github", "hacker_news", "stack_exchange", "crawler"],
+        },
+    })
+
+    queries = QueryPlanner().plan(task, task.data_needed)
+
+    assert any("site:reddit.com" in query.text for query in queries)
+    assert any("site:github.com/issues" in query.text for query in queries)
+    assert any("site:news.ycombinator.com" in query.text for query in queries)
+    assert any("site:stackoverflow.com" in query.text for query in queries)
+    settings = Settings(
+        workspace=Path("."),
+        provider_allowlist=["aisa_reddit", "github", "hacker_news", "stack_exchange", "crawler"],
+    )
+    assert ProviderRouter(settings).select_providers(task) == [
+        "aisa_reddit", "github", "hacker_news", "stack_exchange", "crawler",
+    ]

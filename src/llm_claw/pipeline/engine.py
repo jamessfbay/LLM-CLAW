@@ -50,13 +50,6 @@ class DataAcquisitionEngine:
         data_needs = self.data_need_planner.plan(task)
         queries = self.query_planner.plan(task, data_needs)
         selected = self.router.select_providers(task)
-        reddit_queries = [query for query in queries if "site:reddit.com" in query.text.lower()]
-        aisa_reddit_query_ids = {
-            query.id for query in reddit_queries[: self.settings.aisa_reddit_max_queries]
-        }
-        tavily_queries = [query for query in queries if not query.text.lower().startswith("site:")]
-        tavily_queries.extend(query for query in queries if query.text.lower().startswith("site:") and query not in tavily_queries)
-        aisa_tavily_query_ids = {query.id for query in tavily_queries[: self.settings.aisa_tavily_max_queries]}
         scholar_query = PlannedQuery(
             text=f"{task.entity.metadata.get('topic') or task.question or task.entity.display_name} empirical evidence limitations",
             data_need="academic evidence",
@@ -69,12 +62,10 @@ class DataAcquisitionEngine:
         for provider_name in selected:
             if provider_name in {"crawler", "claude"}:
                 continue
-            provider_queries = [scholar_query] if provider_name == "aisa_scholar" else queries
+            provider_queries = [scholar_query] if provider_name == "aisa_scholar" else _provider_queries(
+                provider_name, queries, task, self.settings,
+            )
             for query in provider_queries:
-                if provider_name == "aisa_reddit" and query.id not in aisa_reddit_query_ids:
-                    continue
-                if provider_name == "aisa_tavily" and query.id not in aisa_tavily_query_ids:
-                    continue
                 discover_jobs.append((provider_name, query))
         if discover_jobs:
             with ThreadPoolExecutor(max_workers=max(1, self.settings.provider_max_workers)) as executor:
@@ -256,6 +247,30 @@ def _timed_discover(provider, task: AcquisitionTask, query) -> tuple[list[Candid
     found, trace = provider.discover(task, query)
     trace.duration_ms = _duration_ms(start)
     return found, trace
+
+
+def _provider_queries(
+    provider: ProviderName,
+    queries: list[PlannedQuery],
+    task: AcquisitionTask,
+    settings: Settings,
+) -> list[PlannedQuery]:
+    text = lambda query: query.text.lower()
+    if provider == "aisa_reddit":
+        return [query for query in queries if "site:reddit.com" in text(query)][: settings.aisa_reddit_max_queries]
+    if provider == "github":
+        return [query for query in queries if "site:github.com" in text(query)][: settings.github_max_queries]
+    if provider == "hacker_news":
+        return [query for query in queries if "site:news.ycombinator.com" in text(query)][: settings.hacker_news_max_queries]
+    if provider == "stack_exchange":
+        return [query for query in queries if "site:stackoverflow.com" in text(query) or "site:stackexchange.com" in text(query)][: settings.stack_exchange_max_queries]
+    if provider == "aisa_tavily":
+        generic = [query for query in queries if not text(query).startswith("site:")]
+        fallback = queries if not generic else generic
+        return fallback[: settings.aisa_tavily_max_queries]
+    if task.task_type == "candidate_buyer_discovery" and provider in {"openai_web_search", "gemini", "search_api"}:
+        return [query for query in queries if not text(query).startswith("site:")][:2]
+    return queries
 
 
 def _duration_ms(start: float) -> int:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
@@ -62,6 +63,7 @@ class AIsaRedditProvider:
                 confidence=0.6,
                 is_official=False,
                 analysis_note="Discovered through AIsa Reddit search; original post must be fetched before it becomes evidence.",
+                metadata=_public_post_metadata(post, url),
             ))
             if len(candidates) >= min(task.source_policy.max_sources, 10):
                 break
@@ -102,3 +104,26 @@ def _post_url(post: dict[str, Any]) -> str | None:
     if not parsed.path.startswith("/r/"):
         return None
     return raw
+
+
+def _public_post_metadata(post: dict[str, Any], post_url: str) -> dict[str, Any]:
+    """Keep only public identity fields needed to trace a potential pain author."""
+    metadata: dict[str, Any] = {"platform": "reddit", "source_post_url": post_url}
+    author = str(post.get("author") or post.get("username") or post.get("user") or "").strip()
+    author = author.removeprefix("u/").removeprefix("/u/")
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,32}", author) and author.lower() not in {"deleted", "automoderator"}:
+        metadata.update({
+            "public_handle": f"u/{author}",
+            "profile_url": f"https://www.reddit.com/user/{author}/",
+            "identity_kind": "public_handle",
+        })
+    subreddit = str(post.get("subreddit") or post.get("community") or "").strip().removeprefix("r/")
+    if re.fullmatch(r"[A-Za-z0-9_]{1,32}", subreddit):
+        metadata["community"] = f"r/{subreddit}"
+    created = post.get("created_utc") or post.get("created") or post.get("timestamp")
+    try:
+        if created is not None:
+            metadata["published_at"] = datetime.fromtimestamp(float(created), timezone.utc).isoformat()
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return metadata

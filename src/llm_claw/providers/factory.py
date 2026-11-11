@@ -10,6 +10,9 @@ from llm_claw.providers.search_api import SearchAPIProvider
 from llm_claw.providers.aisa_reddit import AIsaRedditProvider
 from llm_claw.providers.aisa_tavily import AIsaTavilyProvider
 from llm_claw.providers.aisa_scholar import AIsaScholarProvider
+from llm_claw.providers.github import GitHubProvider
+from llm_claw.providers.hacker_news import HackerNewsProvider
+from llm_claw.providers.stack_exchange import StackExchangeProvider
 
 
 def build_provider(name: ProviderName, settings: Settings):
@@ -23,6 +26,12 @@ def build_provider(name: ProviderName, settings: Settings):
         return AIsaTavilyProvider(settings)
     if name == "aisa_scholar":
         return AIsaScholarProvider(settings)
+    if name == "github":
+        return GitHubProvider(settings)
+    if name == "hacker_news":
+        return HackerNewsProvider(settings)
+    if name == "stack_exchange":
+        return StackExchangeProvider(settings)
     if name == "gemini":
         return GeminiProvider(settings)
     if name == "claude":
@@ -47,6 +56,9 @@ def list_provider_statuses(settings: Settings) -> list[dict[str, str | bool]]:
         "aisa_scholar",
         "aisa_jina_rerank",
         "aisa_similarweb",
+        "github",
+        "hacker_news",
+        "stack_exchange",
         "crawler",
         "claude",
         "gemini",
@@ -65,6 +77,9 @@ def list_provider_statuses(settings: Settings) -> list[dict[str, str | bool]]:
             "aisa_scholar": bool(settings.aisa_api_key),
             "aisa_jina_rerank": bool(settings.aisa_api_key),
             "aisa_similarweb": bool(settings.aisa_api_key),
+            "github": True,
+            "hacker_news": True,
+            "stack_exchange": True,
             "crawler": True,
             "claude": bool(settings.anthropic_api_key),
             "gemini": bool(settings.gemini_api_key),

@@ -87,7 +87,7 @@ class SourceFetcher:
             content_hash=digest,
             raw_path=str(path),
             text=body,
-            metadata={"mock": True, "candidate_snippet": candidate.snippet},
+            metadata={**candidate.metadata, "mock": True, "candidate_snippet": candidate.snippet},
         )
 
     def _file_source(self, candidate: CandidateSource) -> tuple[RawSource | None, SourceFetchDiagnostic]:
@@ -126,7 +126,7 @@ class SourceFetcher:
             content_hash=digest,
             raw_path=str(copy_path),
             text=text,
-            metadata={"file_path": str(path)},
+            metadata={**candidate.metadata, "file_path": str(path)},
         )
         return source, _diagnostic(candidate, status="fetched", fetch_mode="file", bytes=len(data), text_length=len(text), raw_path=str(copy_path))
 
@@ -240,7 +240,7 @@ class SourceFetcher:
             content_hash=digest,
             raw_path=str(path),
             text=text,
-            metadata={"content_type": content_type, "fetch_mode": fetch_mode, "final_url": final_url},
+            metadata={**candidate.metadata, "content_type": content_type, "fetch_mode": fetch_mode, "final_url": final_url},
         )
         return source, _diagnostic(
             candidate,

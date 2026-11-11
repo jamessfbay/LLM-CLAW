@@ -79,13 +79,20 @@ def test_extract_and_reddit_comment_fallbacks_are_bounded(tmp_path: Path, monkey
     fetcher.aisa.get = comments  # type: ignore[method-assign]
     sources, diagnostics = fetcher.fetch_with_diagnostics([
         CandidateSource(provider="aisa_tavily", title="Article", url="https://example.com/article"),
-        CandidateSource(provider="aisa_reddit", title="Discussion", url="https://www.reddit.com/r/Teachers/comments/123/topic/"),
+        CandidateSource(
+            provider="aisa_reddit",
+            title="Discussion",
+            url="https://www.reddit.com/r/Teachers/comments/123/topic/",
+            metadata={"platform": "reddit", "public_handle": "u/teacher_ops"},
+        ),
     ], allowed_providers={"aisa_tavily", "aisa_reddit"})
     assert [item.metadata["fetch_mode"] for item in sources] == ["aisa_tavily_extract", "aisa_reddit_comments"]
     assert [item.status for item in diagnostics] == ["fetched", "fetched"]
     assert fetcher.aisa_extract_attempts == 1
     assert fetcher.aisa_reddit_comment_attempts == 1
     assert "Teachers question" in sources[1].text
+    assert sources[1].metadata["platform"] == "reddit"
+    assert sources[1].metadata["public_handle"] == "u/teacher_ops"
 
 
 def test_fetch_fallback_respects_task_provider_policy(tmp_path: Path, monkeypatch) -> None:

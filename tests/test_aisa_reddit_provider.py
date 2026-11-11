@@ -15,7 +15,14 @@ def test_aisa_reddit_normalizes_only_original_public_post_urls(tmp_path: Path) -
         return {
             "success": True,
             "posts": [
-                {"title": "Teachers describe review pain", "permalink": "/r/Teachers/comments/123/review_pain/", "selftext": "Manual review takes hours."},
+                {
+                    "title": "Teachers describe review pain",
+                    "permalink": "/r/Teachers/comments/123/review_pain/",
+                    "selftext": "Manual review takes hours.",
+                    "author": "teacher_ops",
+                    "subreddit": "Teachers",
+                    "created_utc": 1_735_689_600,
+                },
                 {"title": "Unrelated external link", "url": "https://other.example/article"},
                 {"title": "Unsafe host", "url": "https://reddit.com.evil.example/r/test/comments/9"},
             ],
@@ -35,6 +42,15 @@ def test_aisa_reddit_normalizes_only_original_public_post_urls(tmp_path: Path) -
     assert candidates[0].url == "https://www.reddit.com/r/Teachers/comments/123/review_pain/"
     assert candidates[0].provider == "aisa_reddit"
     assert candidates[0].source_type == "candidate"
+    assert candidates[0].metadata == {
+        "platform": "reddit",
+        "source_post_url": "https://www.reddit.com/r/Teachers/comments/123/review_pain/",
+        "public_handle": "u/teacher_ops",
+        "profile_url": "https://www.reddit.com/user/teacher_ops/",
+        "identity_kind": "public_handle",
+        "community": "r/Teachers",
+        "published_at": "2025-01-01T00:00:00+00:00",
+    }
     assert trace.candidate_count == 1
     assert _reddit_query(query.text) == "AI for Education"
     assert searches == ["AI for Education"]

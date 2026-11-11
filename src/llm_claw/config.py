@@ -23,6 +23,10 @@ class Settings(BaseModel):
     openai_model: str = "gpt-4.1-mini"
     gemini_model: str = "gemini-3.5-flash"
     search_api_key: str | None = None
+    github_token: str | None = None
+    github_max_queries: int = Field(default=3, ge=0, le=10)
+    hacker_news_max_queries: int = Field(default=3, ge=0, le=10)
+    stack_exchange_max_queries: int = Field(default=3, ge=0, le=10)
     aisa_api_key: str | None = None
     aisa_request_timeout_seconds: int = Field(default=30, ge=1, le=120)
     aisa_reddit_max_queries: int = Field(default=2, ge=0, le=10)
@@ -66,6 +70,10 @@ class Settings(BaseModel):
             openai_model=os.getenv("LLM_CLAW_OPENAI_MODEL", "gpt-5.4-mini"),
             gemini_model=os.getenv("LLM_CLAW_GEMINI_MODEL", "gemini-3.8-flash"),
             search_api_key=os.getenv("SEARCH_API_KEY"),
+            github_token=os.getenv("GITHUB_TOKEN"),
+            github_max_queries=int(os.getenv("LLM_CLAW_GITHUB_MAX_QUERIES", "3")),
+            hacker_news_max_queries=int(os.getenv("LLM_CLAW_HACKER_NEWS_MAX_QUERIES", "3")),
+            stack_exchange_max_queries=int(os.getenv("LLM_CLAW_STACK_EXCHANGE_MAX_QUERIES", "3")),
             aisa_api_key=os.getenv("AISA_API_KEY"),
             aisa_request_timeout_seconds=int(os.getenv("AISA_REQUEST_TIMEOUT_SECONDS", "30")),
             aisa_reddit_max_queries=int(os.getenv("LLM_CLAW_AISA_REDDIT_MAX_QUERIES", "2")),

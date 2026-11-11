@@ -27,6 +27,9 @@ ProviderName = Literal[
     "aisa_scholar",
     "aisa_jina_rerank",
     "aisa_similarweb",
+    "github",
+    "hacker_news",
+    "stack_exchange",
     "search_api",
     "crawler",
     "government_api",
@@ -102,6 +105,7 @@ class CandidateSource(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     is_official: bool = False
     analysis_note: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProviderTrace(BaseModel):

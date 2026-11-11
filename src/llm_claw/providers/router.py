@@ -22,6 +22,12 @@ class ProviderRouter:
             selected.append("aisa_tavily")
         if "aisa_scholar" in allowed and self.settings.aisa_scholar_max_queries > 0 and task.task_type == "commercial_deep_research":
             selected.append("aisa_scholar")
+        if "github" in allowed and self.settings.github_max_queries > 0:
+            selected.append("github")
+        if "hacker_news" in allowed and self.settings.hacker_news_max_queries > 0:
+            selected.append("hacker_news")
+        if "stack_exchange" in allowed and self.settings.stack_exchange_max_queries > 0:
+            selected.append("stack_exchange")
         if "gemini" in allowed:
             selected.append("gemini")
         if "mock" in allowed:

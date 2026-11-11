@@ -70,6 +70,7 @@ stream remains a migration fallback.
 - `LLM_CLAW_REQUIRE_RAW_SOURCE_FETCH`: defaults to `true`.
 - `LLM_CLAW_CACHE_DIR`: defaults to `.llm_claw/cache`.
 - `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`, `OPENAI_API_KEY`, `SEARCH_API_KEY`: enable optional providers.
+- `github`, `hacker_news`, and `stack_exchange` discover public pain authors for candidate-buyer research. `GITHUB_TOKEN` raises GitHub API limits; the providers preserve only public handles, profiles, source URLs, and timestamps, and every source still requires raw fetch and evidence extraction.
 - `AISA_API_KEY`: enables selected AIsa-backed sources and enrichments when each task also allows the provider. `aisa_tavily` and `aisa_reddit` discover candidate URLs; `aisa_scholar` is reserved for deep research; `aisa_jina_rerank` only reorders candidates; `aisa_similarweb` adds a traffic estimate for an explicit competitor domain. None of these makes an unfetched URL verified evidence.
 - `LLM_CLAW_AISA_*` bounds queries, fallback extracts, Reddit comment fetches, rerank candidates, and Similarweb domains. See `.env.example` for defaults.
 
