@@ -40,6 +40,8 @@ class Settings(BaseModel):
     aisa_rerank_max_candidates: int = Field(default=40, ge=0, le=100)
     aisa_similarweb_max_domains: int = Field(default=1, ge=0, le=5)
     provider_max_workers: int = 4
+    provider_failure_threshold: int = Field(default=3, ge=1, le=20)
+    provider_circuit_cooldown_seconds: int = Field(default=120, ge=1, le=3600)
     source_user_agent: str = "llm-claw/0.1"
     source_allowed_hosts: list[str] = Field(default_factory=list)
     source_file_roots: list[Path] = Field(default_factory=list)
@@ -92,6 +94,8 @@ class Settings(BaseModel):
             aisa_rerank_max_candidates=int(os.getenv("LLM_CLAW_AISA_RERANK_MAX_CANDIDATES", "40")),
             aisa_similarweb_max_domains=int(os.getenv("LLM_CLAW_AISA_SIMILARWEB_MAX_DOMAINS", "1")),
             provider_max_workers=int(os.getenv("LLM_CLAW_PROVIDER_MAX_WORKERS", "4")),
+            provider_failure_threshold=int(os.getenv("LLM_CLAW_PROVIDER_FAILURE_THRESHOLD", "3")),
+            provider_circuit_cooldown_seconds=int(os.getenv("LLM_CLAW_PROVIDER_CIRCUIT_COOLDOWN_SECONDS", "120")),
             source_user_agent=(
                 os.getenv("CLAW_SOURCE_USER_AGENT")
                 or os.getenv("NOX_SEC_USER_AGENT")

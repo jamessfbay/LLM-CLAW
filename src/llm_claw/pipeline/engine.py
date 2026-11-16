@@ -27,6 +27,7 @@ from llm_claw.providers.factory import build_provider
 from llm_claw.providers.gemini import GeminiProvider
 from llm_claw.providers.aisa_enrichment import AIsaReranker, AIsaSimilarweb
 from llm_claw.providers.router import ProviderRouter
+from llm_claw.providers.circuit_breaker import ProviderCircuitBreaker
 
 
 class DataAcquisitionEngine:
@@ -45,11 +46,17 @@ class DataAcquisitionEngine:
         self.youtube_analyzer = GeminiProvider(settings)
         self.aisa_reranker = AIsaReranker(settings)
         self.aisa_similarweb = AIsaSimilarweb(settings)
+        self.circuits = ProviderCircuitBreaker(
+            settings.workspace,
+            settings.provider_failure_threshold,
+            settings.provider_circuit_cooldown_seconds,
+        )
 
     def run(self, task: AcquisitionTask) -> EvidencePack:
         data_needs = self.data_need_planner.plan(task)
         queries = self.query_planner.plan(task, data_needs)
-        selected = self.router.select_providers(task)
+        requested_providers = self.router.select_providers(task)
+        selected = [provider for provider in requested_providers if not self.circuits.is_open(provider)]
         scholar_query = PlannedQuery(
             text=f"{task.entity.metadata.get('topic') or task.question or task.entity.display_name} empirical evidence limitations",
             data_need="academic evidence",
@@ -57,7 +64,10 @@ class DataAcquisitionEngine:
         )
 
         candidates: list[CandidateSource] = task.seed_sources[:]
-        traces: list[ProviderTrace] = []
+        traces: list[ProviderTrace] = [
+            ProviderTrace(provider=provider, status="disabled", message="Provider circuit is open after repeated failures.")
+            for provider in requested_providers if provider not in selected
+        ]
         discover_jobs = []
         for provider_name in selected:
             if provider_name in {"crawler", "claude"}:
@@ -82,7 +92,12 @@ class DataAcquisitionEngine:
                         found, trace = future.result()
                         candidates.extend(found)
                         traces.append(trace)
+                        if trace.status == "error":
+                            self.circuits.record_failure(provider_name)
+                        else:
+                            self.circuits.record_success(provider_name)
                     except Exception as exc:
+                        self.circuits.record_failure(provider_name)
                         traces.append(
                             ProviderTrace(
                                 provider=provider_name,
