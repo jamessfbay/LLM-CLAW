@@ -68,6 +68,16 @@ class DataAcquisitionEngine:
             ProviderTrace(provider=provider, status="disabled", message="Provider circuit is open after repeated failures.")
             for provider in requested_providers if provider not in selected
         ]
+        planned_providers = {lane.provider for lane in task.provider_policy.source_plan}
+        traces.extend(
+            ProviderTrace(
+                provider=provider,
+                status="disabled",
+                message="Planned provider is not enabled by the runtime allowlist or provider configuration.",
+            )
+            for provider in planned_providers
+            if provider not in requested_providers
+        )
         discover_jobs = []
         for provider_name in selected:
             if provider_name in {"crawler", "claude"}:
@@ -272,26 +282,39 @@ def _provider_queries(
 ) -> list[PlannedQuery]:
     text = lambda query: query.text.lower()
     if provider == "aisa_reddit":
-        return [query for query in queries if "site:reddit.com" in text(query)][: settings.aisa_reddit_max_queries]
+        limit = _source_lane_limit(task, provider, settings.aisa_reddit_max_queries)
+        return [query for query in queries if "site:reddit.com" in text(query)][:limit]
     if provider == "aisa_twitter":
-        return [query for query in queries if "site:x.com" in text(query)][: settings.aisa_twitter_max_queries]
+        limit = _source_lane_limit(task, provider, settings.aisa_twitter_max_queries)
+        return [query for query in queries if "site:x.com" in text(query)][:limit]
     if provider == "aisa_apollo_people":
         return [
             query for query in queries if "site:linkedin.com/in" in text(query)
         ][: settings.aisa_apollo_people_max_queries]
     if provider == "github":
-        return [query for query in queries if "site:github.com" in text(query)][: settings.github_max_queries]
+        limit = _source_lane_limit(task, provider, settings.github_max_queries)
+        return [query for query in queries if "site:github.com" in text(query)][:limit]
     if provider == "hacker_news":
-        return [query for query in queries if "site:news.ycombinator.com" in text(query)][: settings.hacker_news_max_queries]
+        limit = _source_lane_limit(task, provider, settings.hacker_news_max_queries)
+        return [query for query in queries if "site:news.ycombinator.com" in text(query)][:limit]
     if provider == "stack_exchange":
         return [query for query in queries if "site:stackoverflow.com" in text(query) or "site:stackexchange.com" in text(query)][: settings.stack_exchange_max_queries]
     if provider == "aisa_tavily":
         generic = [query for query in queries if not text(query).startswith("site:")]
         fallback = queries if not generic else generic
-        return fallback[: settings.aisa_tavily_max_queries]
-    if task.task_type == "candidate_buyer_discovery" and provider in {"openai_web_search", "gemini", "search_api"}:
-        return [query for query in queries if not text(query).startswith("site:")][:2]
+        limit = _source_lane_limit(task, provider, settings.aisa_tavily_max_queries)
+        return fallback[:limit]
+    if task.task_type in {"candidate_buyer_discovery", "commercial_discovery_research"} and provider in {
+        "openai_web_search", "gemini", "search_api",
+    }:
+        limit = _source_lane_limit(task, provider, 2)
+        return [query for query in queries if not text(query).startswith("site:")][:limit]
     return queries
+
+
+def _source_lane_limit(task: AcquisitionTask, provider: ProviderName, configured_limit: int) -> int:
+    lane = next((item for item in task.provider_policy.source_plan if item.provider == provider), None)
+    return min(configured_limit, lane.query_limit) if lane is not None else configured_limit
 
 
 def _duration_ms(start: float) -> int:

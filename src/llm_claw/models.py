@@ -59,11 +59,20 @@ class SourcePolicy(BaseModel):
     max_sources: int = Field(default=50, ge=1, le=200)
 
 
+class SourceLane(BaseModel):
+    provider: ProviderName
+    label: str
+    purpose: str
+    query_limit: int = Field(default=1, ge=0, le=10)
+    required: bool = False
+
+
 class ProviderPolicy(BaseModel):
     allowed_providers: list[ProviderName] = Field(
         default_factory=lambda: ["mock", "search_api", "crawler", "claude"]
     )
     final_source_must_be_raw_document: bool = True
+    source_plan: list[SourceLane] = Field(default_factory=list)
 
 
 class AcquisitionTask(BaseModel):

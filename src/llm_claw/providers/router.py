@@ -19,7 +19,7 @@ class ProviderRouter:
         if "aisa_reddit" in allowed and self.settings.aisa_reddit_max_queries > 0:
             selected.append("aisa_reddit")
         if (
-            task.task_type == "candidate_buyer_discovery"
+            task.task_type in {"candidate_buyer_discovery", "commercial_discovery_research"}
             and "aisa_twitter" in allowed
             and self.settings.aisa_twitter_max_queries > 0
         ):

@@ -3,6 +3,7 @@ from pathlib import Path
 from llm_claw.cache import build_cache_key
 from llm_claw.config import Settings
 from llm_claw.models import AcquisitionTask
+from llm_claw.pipeline.engine import _provider_queries
 from llm_claw.providers.router import ProviderRouter
 from llm_claw.planning import QueryPlanner
 
@@ -49,6 +50,39 @@ def test_provider_router_selects_aisa_reddit_only_when_budget_allows(tmp_path: P
     assert ProviderRouter(settings).select_providers(task) == ["aisa_reddit", "crawler"]
     settings.aisa_reddit_max_queries = 0
     assert ProviderRouter(settings).select_providers(task) == ["crawler"]
+
+
+def test_commercial_discovery_routes_x_and_honors_source_lane_limits(tmp_path: Path) -> None:
+    task = AcquisitionTask.model_validate({
+        "domain": "commercial_discovery",
+        "task_type": "commercial_discovery_research",
+        "entity": {"name": "AI founder"},
+        "data_needed": [
+            "site:x.com AI founder pain",
+            "site:x.com AI founder alternative",
+            "site:x.com AI founder pricing",
+            "AI founder procurement pricing",
+        ],
+        "provider_policy": {
+            "allowed_providers": ["aisa_twitter", "openai_web_search", "crawler"],
+            "source_plan": [
+                {"provider": "aisa_twitter", "label": "X", "purpose": "pain", "query_limit": 2, "required": True},
+                {"provider": "openai_web_search", "label": "Web", "purpose": "fallback", "query_limit": 1},
+            ],
+        },
+    })
+    settings = Settings(
+        workspace=tmp_path,
+        provider_allowlist=["aisa_twitter", "openai_web_search", "crawler"],
+        aisa_twitter_max_queries=4,
+    )
+    queries = QueryPlanner().plan(task, task.data_needed)
+
+    assert ProviderRouter(settings).select_providers(task) == ["openai_web_search", "aisa_twitter", "crawler"]
+    assert len(_provider_queries("aisa_twitter", queries, task, settings)) == 2
+    web_queries = _provider_queries("openai_web_search", queries, task, settings)
+    assert len(web_queries) == 1
+    assert "site:" not in web_queries[0].text
 
 
 def test_cache_key_contains_stable_task_provider_dimensions() -> None:
